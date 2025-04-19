@@ -156,6 +156,8 @@ The server exposes the following MCP Resources and Tools:
 - `propose_new_knowledge(proposed_content: str, suggested_tags: List[str] = [])` - Propose a new knowledge entry
 - `suggest_knowledge_update(entry_id: str, suggested_changes: str)` - Suggest updates to an existing entry
 
+For a comprehensive analysis of how these tools work and interact with the system, see the [MCP Tools Analysis](docs/tools/mcp_tools_analysis.md) documentation.
+
 ### MCP Client Configuration
 
 To add this MCP server to your client's mcp.json:
