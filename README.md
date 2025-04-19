@@ -30,6 +30,18 @@ This is a Python-based Model Context Protocol (MCP) server that provides a persi
    # Edit .env to add your API key
    ```
 
+## Server Configuration
+
+The MCP server port can be configured using environment variables:
+
+1. Copy the `.env.example` file to `.env`
+2. Edit the `.env` file to set the desired port:
+   ```
+   MCP_SERVER_PORT=8000
+   ```
+
+If the specified port is already in use, the server will automatically find and use the next available port.
+
 ## Usage
 
 ### Running the Server

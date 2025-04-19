@@ -105,7 +105,9 @@ class KnowledgeSync:
         collection_name: str = "knowledge_base",
         state_file_path: Optional[str] = None,
         embedder: Optional[Embedder] = None,
-        enable_watchdog: bool = True
+        enable_watchdog: bool = True,
+        embedding_timeout: int = 30,  # Timeout for embedding operations in seconds
+        batch_size: int = 10  # Batch size for embedding operations
     ):
         """
         Initialize the KnowledgeSync with ChromaDB client and paths.
@@ -117,6 +119,8 @@ class KnowledgeSync:
             state_file_path: Path to the state file (defaults to knowledge_base_path/.sync_state.json)
             embedder: Embedder instance for generating embeddings
             enable_watchdog: Whether to enable watchdog file monitoring
+            embedding_timeout: Timeout for embedding operations in seconds
+            batch_size: Batch size for embedding operations
         """
         self.chroma_client = chroma_client
         self.knowledge_base_path = knowledge_base_path
@@ -124,7 +128,21 @@ class KnowledgeSync:
         self.state_file_path = state_file_path or os.path.join(knowledge_base_path, ".sync_state.json")
         self.embedder = embedder or Embedder()
         self.enable_watchdog = enable_watchdog
+        self.embedding_timeout = embedding_timeout
+        self.batch_size = batch_size
         self._lock = threading.Lock()
+        
+        # Synchronization status tracking
+        self.is_syncing = False
+        self.sync_progress = {
+            "total_files": 0,
+            "processed_files": 0,
+            "total_chunks": 0,
+            "processed_chunks": 0,
+            "errors": 0,
+            "last_error": None,
+            "last_processed_file": None
+        }
         
         self.collection = self.chroma_client.get_or_create_collection(name=collection_name)
         
@@ -148,12 +166,10 @@ class KnowledgeSync:
     def start(self):
         """
         Start the knowledge sync service.
-        Performs initial synchronization and starts watchdog if enabled.
         """
-        self.sync()
-        
         if self.enable_watchdog and not self.observer:
             self._setup_watchdog()
+            
     
     def stop(self):
         """
@@ -241,11 +257,23 @@ class KnowledgeSync:
             
             chunks = chunk_markdown(content)
             
-            batch_size = 10  # Adjust based on API limits
-            for i in range(0, len(chunks), batch_size):
-                batch_chunks = chunks[i:i+batch_size]
+            with self._lock:
+                self.sync_progress["total_chunks"] += len(chunks)
+            
+            for i in range(0, len(chunks), self.batch_size):
+                batch_chunks = chunks[i:i+self.batch_size]
                 
-                embeddings = self.embedder.generate_embeddings_batch(batch_chunks)
+                try:
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        future = executor.submit(self.embedder.generate_embeddings_batch, batch_chunks)
+                        embeddings = future.result(timeout=self.embedding_timeout)
+                except concurrent.futures.TimeoutError:
+                    logger.error(f"Embedding operation timed out after {self.embedding_timeout} seconds for {file_path}")
+                    continue
+                except Exception as e:
+                    logger.error(f"Error generating embeddings for {file_path}: {e}")
+                    continue
                 
                 ids = []
                 metadatas = []
@@ -269,17 +297,27 @@ class KnowledgeSync:
                     metadatas.append(metadata)
                     documents.append(chunk)
                 
-                self.collection.add(
-                    ids=ids,
-                    embeddings=embeddings,
-                    metadatas=metadatas,
-                    documents=documents
-                )
+                try:
+                    self.collection.add(
+                        ids=ids,
+                        embeddings=embeddings,
+                        metadatas=metadatas,
+                        documents=documents
+                    )
+                    
+                    with self._lock:
+                        self.sync_progress["processed_chunks"] += len(batch_chunks)
+                
+                except Exception as e:
+                    logger.error(f"Error adding chunks to ChromaDB for {file_path}: {e}")
             
             logger.info(f"Processed {file_path}: {len(chunks)} chunks added to ChromaDB")
             
         except Exception as e:
             logger.error(f"Error processing {file_path}: {e}")
+            with self._lock:
+                self.sync_progress["errors"] += 1
+                self.sync_progress["last_error"] = str(e)
     
     def _delete_entry_chunks(self, entry_id: str):
         """
@@ -336,6 +374,19 @@ class KnowledgeSync:
             except Exception as e:
                 logger.error(f"Error processing {event_type} event for {file_path}: {e}")
     
+    def get_sync_status(self):
+        """
+        Get the current synchronization status.
+        
+        Returns:
+            Dictionary with synchronization status information
+        """
+        with self._lock:
+            return {
+                "is_syncing": self.is_syncing,
+                "progress": self.sync_progress.copy()
+            }
+    
     def sync(self):
         """
         Synchronize the knowledge base with ChromaDB.
@@ -344,36 +395,64 @@ class KnowledgeSync:
         logger.info("Starting knowledge base synchronization...")
         
         with self._lock:
-            # Get current Markdown files
-            current_files = self._get_markdown_files()
-            current_files_set = set(current_files)
+            self.is_syncing = True
             
-            deleted_files = set(self.state.keys()) - current_files_set
+            self.sync_progress = {
+                "total_files": 0,
+                "processed_files": 0,
+                "total_chunks": 0,
+                "processed_chunks": 0,
+                "errors": 0,
+                "last_error": None,
+                "last_processed_file": None
+            }
             
-            for file_path in current_files:
-                try:
-                    content_hash = self._compute_content_hash(file_path)
-                    
-                    if file_path not in self.state or self.state[file_path] != content_hash:
-                        logger.info(f"Processing {'new' if file_path not in self.state else 'modified'} file: {file_path}")
-                        self._process_file(file_path, content_hash)
-                        self.state[file_path] = content_hash
-                except Exception as e:
-                    logger.error(f"Error processing file {file_path}: {e}")
+            try:
+                # Get current Markdown files
+                current_files = self._get_markdown_files()
+                current_files_set = set(current_files)
+                
+                deleted_files = set(self.state.keys()) - current_files_set
+                
+                self.sync_progress["total_files"] = len(current_files) + len(deleted_files)
+                
+                for file_path in current_files:
+                    try:
+                        content_hash = self._compute_content_hash(file_path)
+                        
+                        if file_path not in self.state or self.state[file_path] != content_hash:
+                            logger.info(f"Processing {'new' if file_path not in self.state else 'modified'} file: {file_path}")
+                            self._process_file(file_path, content_hash)
+                            self.state[file_path] = content_hash
+                            
+                            self.sync_progress["processed_files"] += 1
+                            self.sync_progress["last_processed_file"] = file_path
+                    except Exception as e:
+                        logger.error(f"Error processing file {file_path}: {e}")
+                        self.sync_progress["errors"] += 1
+                        self.sync_progress["last_error"] = str(e)
+                
+                for file_path in deleted_files:
+                    try:
+                        frontmatter = get_frontmatter(file_path) if os.path.exists(file_path) else None
+                        
+                        if frontmatter and 'entry_id' in frontmatter:
+                            entry_id = frontmatter['entry_id']
+                            self._delete_entry_chunks(entry_id)
+                        
+                        del self.state[file_path]
+                        logger.info(f"Processed deleted file: {file_path}")
+                        
+                        self.sync_progress["processed_files"] += 1
+                        self.sync_progress["last_processed_file"] = file_path
+                    except Exception as e:
+                        logger.error(f"Error handling deleted file {file_path}: {e}")
+                        self.sync_progress["errors"] += 1
+                        self.sync_progress["last_error"] = str(e)
+                
+                self._save_state()
+                
+                logger.info(f"Synchronization completed. Processed {len(current_files)} files, {len(deleted_files)} deletions.")
             
-            for file_path in deleted_files:
-                try:
-                    frontmatter = get_frontmatter(file_path) if os.path.exists(file_path) else None
-                    
-                    if frontmatter and 'entry_id' in frontmatter:
-                        entry_id = frontmatter['entry_id']
-                        self._delete_entry_chunks(entry_id)
-                    
-                    del self.state[file_path]
-                    logger.info(f"Processed deleted file: {file_path}")
-                except Exception as e:
-                    logger.error(f"Error handling deleted file {file_path}: {e}")
-            
-            self._save_state()
-            
-            logger.info(f"Synchronization completed. Processed {len(current_files)} files, {len(deleted_files)} deletions.")
+            finally:
+                self.is_syncing = False
