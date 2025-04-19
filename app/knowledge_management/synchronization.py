@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import logging
 import threading
 from typing import Dict, List, Any, Optional
 import hashlib
@@ -9,6 +10,8 @@ from watchdog.events import FileSystemEventHandler, FileCreatedEvent, FileModifi
 from app.knowledge_management.markdown_parser import parse_markdown_file, get_frontmatter
 from app.knowledge_management.chunking import chunk_markdown, create_chunk_metadata
 from app.knowledge_management.embedder import Embedder
+
+logger = logging.getLogger(__name__)
 
 class MarkdownEventHandler(FileSystemEventHandler):
     """
@@ -140,7 +143,7 @@ class KnowledgeSync:
         self.observer.schedule(event_handler, self.knowledge_base_path, recursive=True)
         self.observer.daemon = True
         self.observer.start()
-        print(f"Watchdog observer started for {self.knowledge_base_path}")
+        logger.info(f"Watchdog observer started for {self.knowledge_base_path}")
     
     def start(self):
         """
@@ -161,7 +164,7 @@ class KnowledgeSync:
             self.observer.stop()
             self.observer.join()
             self.observer = None
-            print("Watchdog observer stopped")
+            logger.info("Watchdog observer stopped")
     
     def _load_state(self) -> Dict[str, str]:
         """
@@ -175,7 +178,7 @@ class KnowledgeSync:
                 with open(self.state_file_path, 'r') as f:
                     return json.load(f)
             except json.JSONDecodeError:
-                print(f"Error loading state file {self.state_file_path}. Initializing empty state.")
+                logger.error(f"Error loading state file {self.state_file_path}. Initializing empty state.")
                 return {}
         return {}
     
@@ -226,7 +229,7 @@ class KnowledgeSync:
             content, frontmatter = parse_markdown_file(file_path)
             
             if not frontmatter or 'entry_id' not in frontmatter:
-                print(f"Skipping {file_path}: Missing required frontmatter (entry_id)")
+                logger.warning(f"Skipping {file_path}: Missing required frontmatter (entry_id)")
                 return
             
             entry_id = frontmatter['entry_id']
@@ -273,10 +276,10 @@ class KnowledgeSync:
                     documents=documents
                 )
             
-            print(f"Processed {file_path}: {len(chunks)} chunks added to ChromaDB")
+            logger.info(f"Processed {file_path}: {len(chunks)} chunks added to ChromaDB")
             
         except Exception as e:
-            print(f"Error processing {file_path}: {e}")
+            logger.error(f"Error processing {file_path}: {e}")
     
     def _delete_entry_chunks(self, entry_id: str):
         """
@@ -292,9 +295,9 @@ class KnowledgeSync:
             
             if results and results['ids']:
                 self.collection.delete(ids=results['ids'])
-                print(f"Deleted {len(results['ids'])} existing chunks for entry_id: {entry_id}")
+                logger.info(f"Deleted {len(results['ids'])} existing chunks for entry_id: {entry_id}")
         except Exception as e:
-            print(f"Error deleting chunks for entry_id {entry_id}: {e}")
+            logger.error(f"Error deleting chunks for entry_id {entry_id}: {e}")
     
     def process_file_event(self, file_path: str, event_type: str):
         """
@@ -310,7 +313,7 @@ class KnowledgeSync:
                     content_hash = self._compute_content_hash(file_path)
                     
                     if file_path not in self.state or self.state[file_path] != content_hash:
-                        print(f"Processing {event_type} file: {file_path}")
+                        logger.info(f"Processing {event_type} file: {file_path}")
                         self._process_file(file_path, content_hash)
                         self.state[file_path] = content_hash
                         self._save_state()
@@ -328,17 +331,17 @@ class KnowledgeSync:
                         
                         del self.state[file_path]
                         self._save_state()
-                        print(f"Processed deleted file: {file_path}")
+                        logger.info(f"Processed deleted file: {file_path}")
             
             except Exception as e:
-                print(f"Error processing {event_type} event for {file_path}: {e}")
+                logger.error(f"Error processing {event_type} event for {file_path}: {e}")
     
     def sync(self):
         """
         Synchronize the knowledge base with ChromaDB.
         Detects new, modified, and deleted files and updates ChromaDB accordingly.
         """
-        print("Starting knowledge base synchronization...")
+        logger.info("Starting knowledge base synchronization...")
         
         with self._lock:
             # Get current Markdown files
@@ -352,11 +355,11 @@ class KnowledgeSync:
                     content_hash = self._compute_content_hash(file_path)
                     
                     if file_path not in self.state or self.state[file_path] != content_hash:
-                        print(f"Processing {'new' if file_path not in self.state else 'modified'} file: {file_path}")
+                        logger.info(f"Processing {'new' if file_path not in self.state else 'modified'} file: {file_path}")
                         self._process_file(file_path, content_hash)
                         self.state[file_path] = content_hash
                 except Exception as e:
-                    print(f"Error processing file {file_path}: {e}")
+                    logger.error(f"Error processing file {file_path}: {e}")
             
             for file_path in deleted_files:
                 try:
@@ -367,10 +370,10 @@ class KnowledgeSync:
                         self._delete_entry_chunks(entry_id)
                     
                     del self.state[file_path]
-                    print(f"Processed deleted file: {file_path}")
+                    logger.info(f"Processed deleted file: {file_path}")
                 except Exception as e:
-                    print(f"Error handling deleted file {file_path}: {e}")
+                    logger.error(f"Error handling deleted file {file_path}: {e}")
             
             self._save_state()
             
-            print(f"Synchronization completed. Processed {len(current_files)} files, {len(deleted_files)} deletions.")
+            logger.info(f"Synchronization completed. Processed {len(current_files)} files, {len(deleted_files)} deletions.")

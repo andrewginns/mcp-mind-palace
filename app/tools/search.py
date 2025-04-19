@@ -1,7 +1,10 @@
 from typing import List, Dict, Any
 import os
+import logging
 from app.knowledge_management.embedder import Embedder
 from app.config import chroma_client
+
+logger = logging.getLogger(__name__)
 
 def search_knowledge(task_description: str, top_k: int = 5) -> List[Dict[str, Any]]:
     """
@@ -39,7 +42,7 @@ def search_knowledge(task_description: str, top_k: int = 5) -> List[Dict[str, An
         return formatted_results
     
     except Exception as e:
-        print(f"Error searching knowledge: {e}")
+        logger.error(f"Error searching knowledge: {e}")
         return []
 
 def get_entry_details(entry_id: str) -> Dict[str, Any]:
@@ -79,5 +82,5 @@ def get_entry_details(entry_id: str) -> Dict[str, Any]:
         }
     
     except Exception as e:
-        print(f"Error getting entry details for {entry_id}: {e}")
+        logger.error(f"Error getting entry details for {entry_id}: {e}")
         return {"error": f"Error retrieving knowledge entry: {str(e)}"}

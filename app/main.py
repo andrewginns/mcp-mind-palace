@@ -9,7 +9,7 @@ import sys
 logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler(sys.stdout)]
+    handlers=[logging.StreamHandler(sys.stderr)]
 )
 logger = logging.getLogger(__name__)
 
@@ -63,10 +63,20 @@ mcp = FastMCP("LocalKnowledgeServer")
 from app.resources import register_resources
 from app.tools import register_tools
 
-register_resources(mcp)
-register_tools(mcp)
+try:
+    register_resources(mcp)
+    register_tools(mcp)
+except Exception as e:
+    import traceback
+    logger.error(f"Error during resource or tool registration: {e}")
+    logger.error(traceback.format_exc())
 
-app.mount("/mcp", mcp.sse_app())
+try:
+    app.mount("/mcp", mcp.sse_app())
+except Exception as e:
+    import traceback
+    logger.error(f"Error mounting MCP app: {e}")
+    logger.error(traceback.format_exc())
 
 if __name__ == "__main__":
     import uvicorn

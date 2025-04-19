@@ -2,8 +2,11 @@ import os
 from typing import List, Dict, Any, Optional
 import hashlib
 import uuid
+import logging
 import openai
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -47,7 +50,7 @@ class Embedder:
             )
             return response.data[0].embedding
         except Exception as e:
-            print(f"Error generating embedding: {e}")
+            logger.error(f"Error generating embedding: {e}")
             raise
     
     def generate_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
@@ -67,7 +70,7 @@ class Embedder:
             )
             return [item.embedding for item in response.data]
         except Exception as e:
-            print(f"Error generating embeddings batch: {e}")
+            logger.error(f"Error generating embeddings batch: {e}")
             raise
     
     @staticmethod

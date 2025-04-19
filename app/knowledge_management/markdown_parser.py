@@ -1,7 +1,10 @@
 import os
 import re
 import yaml
+import logging
 from typing import Dict, Tuple, Optional, Any
+
+logger = logging.getLogger(__name__)
 
 def get_frontmatter(file_path: str) -> Optional[Dict[str, Any]]:
     """
@@ -27,7 +30,7 @@ def get_frontmatter(file_path: str) -> Optional[Dict[str, Any]]:
             frontmatter_yaml = match.group(1)
             return yaml.safe_load(frontmatter_yaml)
         except yaml.YAMLError as e:
-            print(f"Error parsing frontmatter in {file_path}: {e}")
+            logger.error(f"Error parsing frontmatter in {file_path}: {e}")
             return None
     
     return None
@@ -61,7 +64,7 @@ def parse_markdown_file(file_path: str) -> Tuple[str, Optional[Dict[str, Any]]]:
             content_without_frontmatter = re.sub(frontmatter_pattern, '', content, 1)
             return content_without_frontmatter, frontmatter
         except yaml.YAMLError as e:
-            print(f"Error parsing frontmatter in {file_path}: {e}")
+            logger.error(f"Error parsing frontmatter in {file_path}: {e}")
             return content, None
     
     return content, None

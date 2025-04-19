@@ -1,9 +1,12 @@
 from typing import List, Dict, Optional
 import os
 import yaml
+import logging
 import markdown
 from app.knowledge_management.markdown_parser import parse_markdown_file, get_frontmatter
 from app.config import KNOWLEDGE_BASE_PATH, chroma_client
+
+logger = logging.getLogger(__name__)
 
 def list_knowledge_entries(tag: Optional[str] = None) -> List[Dict]:
     """
@@ -38,7 +41,7 @@ def list_knowledge_entries(tag: Optional[str] = None) -> List[Dict]:
                                 'tags': metadata.get('tags', [])
                             })
                 except Exception as e:
-                    print(f"Error parsing {file_path}: {e}")
+                    logger.error(f"Error parsing {file_path}: {e}")
     
     return results
 
@@ -67,7 +70,7 @@ def get_knowledge_entry(entry_id: str) -> Dict:
                             'html': markdown.markdown(content)
                         }
                 except Exception as e:
-                    print(f"Error parsing {file_path}: {e}")
+                    logger.error(f"Error parsing {file_path}: {e}")
     
     return {
         'error': f"Knowledge entry with ID '{entry_id}' not found"

@@ -1,8 +1,11 @@
 import os
 import time
 import yaml
+import logging
 from typing import List, Dict, Any, Optional
 from app.config import KNOWLEDGE_BASE_PATH
+
+logger = logging.getLogger(__name__)
 
 def propose_new_knowledge(proposed_content: str, suggested_tags: List[str] = []) -> str:
     """
@@ -45,7 +48,7 @@ def propose_new_knowledge(proposed_content: str, suggested_tags: List[str] = [])
         return f"Proposal submitted for review. Saved as {file_path}"
     
     except Exception as e:
-        print(f"Error saving proposal: {e}")
+        logger.error(f"Error saving proposal: {e}")
         return f"Error saving proposal: {str(e)}"
 
 def suggest_knowledge_update(entry_id: str, suggested_changes: str) -> str:
@@ -84,5 +87,5 @@ def suggest_knowledge_update(entry_id: str, suggested_changes: str) -> str:
         return f"Update suggestion for {entry_id} submitted for review. Saved as {file_path}"
     
     except Exception as e:
-        print(f"Error saving update suggestion: {e}")
+        logger.error(f"Error saving update suggestion: {e}")
         return f"Error saving update suggestion: {str(e)}"
