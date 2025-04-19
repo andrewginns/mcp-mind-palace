@@ -7,7 +7,6 @@ requires-python = ">=3.11"
 license = {text = "MIT"}
 dependencies = [
     "chromadb>=1.0.5",
-    "fastapi>=0.115.9",
     "fastmcp>=2.2.0",
     "langchain>=0.3.23",
     "langchain-openai>=0.3.14",
@@ -15,7 +14,6 @@ dependencies = [
     "openai>=1.75.0",
     "pydantic>=2.11.3",
     "python-dotenv>=1.1.0",
-    "uvicorn>=0.34.2",
     "watchdog>=6.0.0",
 ]
 

@@ -53,13 +53,13 @@ uv venv
 source .venv/bin/activate
 
 # For development with MCP Inspector
-python -m mcp dev app/main.py
+uv run run_server.py
 
 # For Claude Desktop integration
-python -m mcp install app/main.py
+uv run run_server.py
 
 # As a standalone server
-python run_server.py
+uv run run_server.py
 ```
 
 Alternatively, use the provided run script:
@@ -70,10 +70,10 @@ Alternatively, use the provided run script:
 Without uv:
 ```
 # For development with MCP Inspector
-mcp dev app/main.py
+python run_server.py
 
 # For Claude Desktop integration
-mcp install app/main.py
+python run_server.py
 
 # As a standalone server
 python run_server.py
@@ -81,51 +81,43 @@ python run_server.py
 
 ### MCP Protocol Usage
 
-MCP servers follow a specific protocol for client-server communication. Clients interact with the server by sending POST requests to the `/mcp/messages` endpoint with specific JSON payloads.
+MCP servers follow a specific protocol for client-server communication using stdio transport. Clients interact with the server through the MCP API.
 
-#### Example client usage:
+#### Example client usage with MCP Python SDK:
 
 ```python
-import asyncio
-import httpx
-import uuid
+from mcp import ClientSession, StdioServerParameters
 
 async def example_client():
-    session_id = str(uuid.uuid4())
-    base_url = "http://localhost:8082/mcp/messages"
+    # Create server parameters for stdio connection
+    server_params = StdioServerParameters(
+        command="uv",  # Executable
+        args=["run", "run_server.py"],  # Script to run
+    )
     
-    async with httpx.AsyncClient() as client:
-        # List available resources
-        response = await client.post(
-            f"{base_url}/",
-            params={"session_id": session_id},
-            json={"type": "list_resources_request"}
-        )
-        print(f"Resources: {response.json()}")
-        
-        # List available tools
-        response = await client.post(
-            f"{base_url}/",
-            params={"session_id": session_id},
-            json={"type": "list_tools_request"}
-        )
-        print(f"Tools: {response.json()}")
-        
-        # Call search_knowledge tool
-        response = await client.post(
-            f"{base_url}/",
-            params={"session_id": session_id},
-            json={
-                "type": "call_tool_request",
-                "tool_name": "search_knowledge",
-                "arguments": {
-                    "task_description": "Python type hints best practices"
-                }
-            }
-        )
-        print(f"Search results: {response.json()}")
+    # Connect to the server
+    async with mcp.client.stdio.stdio_client(server_params) as (read, write):
+        async with ClientSession(read, write) as session:
+            # Initialize the connection
+            await session.initialize()
+            
+            # List available resources
+            resources = await session.list_resources()
+            print(f"Resources: {resources}")
+            
+            # List available tools
+            tools = await session.list_tools()
+            print(f"Tools: {tools}")
+            
+            # Call search_knowledge tool
+            result = await session.call_tool(
+                "search_knowledge", 
+                arguments={"task_description": "Python type hints best practices"}
+            )
+            print(f"Search results: {result}")
 
 if __name__ == "__main__":
+    import asyncio
     asyncio.run(example_client())
 ```
 

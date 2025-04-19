@@ -1,6 +1,5 @@
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
-from fastapi import FastAPI
 from mcp.server.fastmcp import FastMCP
 from app.config import chroma_client
 import logging
@@ -56,16 +55,15 @@ def run_sync_in_background(knowledge_sync):
         logger.info("Initialization marked as complete.")
 
 @asynccontextmanager
-async def lifespan_context(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan_context(server: FastMCP) -> AsyncIterator[None]:
     """
-    Lifespan manager for the FastAPI app.
+    Lifespan manager for the MCP server.
     Handles initialization and cleanup of resources.
     """
     global global_knowledge_sync
     
-    logger.info("=== APP LIFESPAN STARTING ===")
+    logger.info("=== MCP SERVER LIFESPAN STARTING ===")
     
-    logger.info("Server starting, yielding control to allow fast MCP initialization...")
     yield
     
     knowledge_sync = None
@@ -105,60 +103,14 @@ async def lifespan_context(app: FastAPI) -> AsyncIterator[None]:
         logger.error(f"Error during post-initialization setup: {e}")
         logger.error(traceback.format_exc())
     
-    logger.info("=== APP LIFESPAN CLEANUP ===")
+    logger.info("=== MCP SERVER LIFESPAN CLEANUP ===")
     if knowledge_sync:
         knowledge_sync.stop()
         logger.info("Knowledge synchronization stopped.")
     
     logger.info("Server shutting down.")
 
-app = FastAPI(lifespan=lifespan_context)
-
-@app.on_event("startup")
-async def startup_event():
-    """
-    Handle startup events for the FastAPI app.
-    Log server startup information.
-    """
-    logger.info("FastAPI server startup event triggered")
-
-@app.get("/status")
-async def get_status():
-    """
-    Get the status of the server, including knowledge base synchronization status.
-    """
-    global global_knowledge_sync
-    
-    status = {
-        "server": "running",
-        "initialization": "complete" if global_knowledge_sync is not None else "in_progress",
-        "knowledge_sync": {
-            "initialized": global_knowledge_sync is not None,
-            "watching_enabled": global_knowledge_sync.enable_watchdog if global_knowledge_sync else False,
-            "collection_count": global_knowledge_sync.collection.count() if global_knowledge_sync else 0,
-            "sync_status": global_knowledge_sync.get_sync_status() if global_knowledge_sync else {"is_syncing": False}
-        }
-    }
-    
-    return status
-
-@app.get("/health")
-async def health_check():
-    """
-    Health check endpoint for monitoring server status.
-    """
-    global global_knowledge_sync, initialization_complete
-    
-    return {
-        "status": "healthy",
-        "timestamp": time.time(),
-        "initialization_complete": initialization_complete,
-        "knowledge_sync_available": global_knowledge_sync is not None,
-        "uptime": "unknown",  # Could be enhanced with actual uptime tracking
-        "port_conflict_resolution": "automatic_port_selection_enabled"
-    }
-
-mcp = FastMCP("LocalKnowledgeServer")
+mcp = FastMCP("LocalKnowledgeServer", lifespan=lifespan_context)
 
 from app.resources import register_resources
 from app.tools import register_tools
@@ -170,25 +122,3 @@ except Exception as e:
     import traceback
     logger.error(f"Error during resource or tool registration: {e}")
     logger.error(traceback.format_exc())
-
-try:
-    app.mount("/mcp", mcp.sse_app())
-except Exception as e:
-    import traceback
-    logger.error(f"Error mounting MCP app: {e}")
-    logger.error(traceback.format_exc())
-
-if __name__ == "__main__":
-    import uvicorn
-    import os
-    import socket
-    
-    host = os.getenv("MCP_SERVER_HOST", "0.0.0.0")
-    preferred_port = int(os.getenv("MCP_SERVER_PORT", "8080"))
-    
-    logger.info(f"Starting server on {host}:{preferred_port}...")
-    
-    try:
-        uvicorn.run(app, host=host, port=preferred_port)
-    except Exception as e:
-        logger.error(f"Error starting server: {e}")
