@@ -10,6 +10,7 @@ This is a Python-based Model Context Protocol (MCP) server that provides a persi
 - LLM can search for relevant knowledge based on task description
 - LLM can propose new knowledge entries or suggest updates to existing ones
 - Human-in-the-loop workflow for knowledge management
+- Guided knowledge management workflow for LLMs to ensure proper content organization
 
 ## Installation
 
@@ -52,14 +53,14 @@ With uv (recommended):
 uv venv
 source .venv/bin/activate
 
-# For development with MCP Inspector
+# Run with stdio transport (default)
 uv run run_server.py
 
-# For Claude Desktop integration
-uv run run_server.py
+# Run with SSE transport
+TRANSPORT=sse uv run run_server.py
 
-# As a standalone server
-uv run run_server.py
+# Explicitly specify stdio transport
+TRANSPORT=stdio uv run run_server.py
 ```
 
 Alternatively, use the provided run script:
@@ -69,14 +70,91 @@ Alternatively, use the provided run script:
 
 Without uv:
 ```
-# For development with MCP Inspector
+# Run with stdio transport (default)
 python run_server.py
 
-# For Claude Desktop integration
-python run_server.py
+# Run with SSE transport
+TRANSPORT=sse python run_server.py
+```
 
-# As a standalone server
-python run_server.py
+### Using MCP Inspector
+
+The MCP Inspector is a developer tool that helps debug and test MCP servers. It provides a visual interface to explore your server's available tools, resources, and prompts, and allows you to call them interactively.
+
+To use MCP Inspector with Mind Palace:
+
+```bash
+# Install MCP Inspector (if not already installed)
+npm install -g @modelcontextprotocol/inspector
+
+# Run Mind Palace with the inspector
+npx @modelcontextprotocol/inspector uv run run_server.py
+```
+
+Or use the provided Makefile:
+
+```bash
+make debug
+```
+
+The Inspector will open in your browser, allowing you to:
+- Browse all available tools, resources, and prompts
+- Test tool calls with custom parameters
+- View response data in a structured format
+- Debug issues with your MCP server implementation
+
+This is especially useful during development to ensure your tools are working correctly before integrating with AI assistants.
+
+### Using Docker
+
+A Dockerfile is provided to easily containerize and run the server:
+
+```bash
+# Build the Docker image
+docker build -t mind-palace .
+
+# Run with default settings (SSE transport on port 8050)
+docker run -p 8050:8050 mind-palace
+
+# Run with custom port
+docker build --build-arg PORT=9000 -t mind-palace .
+docker run -p 9000:9000 mind-palace
+
+# Override transport at runtime
+docker run -p 8050:8050 -e TRANSPORT=stdio mind-palace
+```
+
+Environment variables that can be set:
+- `TRANSPORT`: Set to `sse` or `stdio` (default: `stdio` when running locally, `sse` in Docker)
+- `PORT`: The port to use for SSE transport (default: `8050`)
+- `HOST`: The host to bind to (default: `0.0.0.0` in Docker, localhost otherwise)
+
+### Adding to MCP Client Configuration
+
+To use Mind Palace with an MCP-compatible client (like Claude Desktop), add it to your client's configuration:
+
+```json
+{
+  "mcpServers": {
+    "mind-palace": {
+      "command": "uv",
+      "args": ["run", "run_server.py"]
+    }
+  }
+}
+```
+
+For Docker:
+
+```json
+{
+  "mcpServers": {
+    "mind-palace": {
+      "command": "docker",
+      "args": ["run", "--rm", "-p", "8050:8050", "mind-palace"]
+    }
+  }
+}
 ```
 
 ### MCP Protocol Usage
@@ -153,10 +231,38 @@ The server exposes the following MCP Resources and Tools:
 
 - `search_knowledge(task_description: str, top_k: int = 5)` - Search for relevant knowledge
 - `get_entry_details(entry_id: str)` - Get details of a specific entry
-- `propose_new_knowledge(proposed_content: str, suggested_tags: List[str] = [])` - Propose a new knowledge entry
-- `suggest_knowledge_update(entry_id: str, suggested_changes: str)` - Suggest updates to an existing entry
+- `propose_new_knowledge(proposed_content: str, suggested_tags: List[str] = [], search_verification: Optional[str] = None)` - Propose a new knowledge entry. Intelligently handles content with or without frontmatter.
+- `suggest_knowledge_update(entry_id: str, suggested_changes: str, existing_content_verified: bool = False)` - Suggest updates to an existing entry
+
+#### Prompts
+
+- `knowledge_management_workflow` - Provides guidance to LLMs on the proper process for managing knowledge
 
 For a comprehensive analysis of how these tools work and interact with the system, see the [MCP Tools Analysis](docs/tools/mcp_tools_analysis.md) documentation.
+
+### LLM Knowledge Management Workflow
+
+This server implements a guided workflow for LLMs to manage knowledge properly, ensuring that:
+
+1. Before proposing new knowledge, the LLM checks existing entries for similar content
+2. If similar content exists, the LLM suggests updates instead of creating duplicates
+3. New knowledge proposals include proper verification steps
+
+The workflow is enforced through:
+
+- A `knowledge_management_workflow` prompt that guides the LLM through the proper steps
+- Enhanced search results with relevance assessments
+- Verification checks in knowledge proposal functions
+- Clear response messages encouraging appropriate tool use
+
+When the LLM needs to add or update information in the knowledge base, it should:
+
+1. First, use `search_knowledge` to find related entries
+2. For promising entries, use `get_entry_details` to examine the full content 
+3. If similar content exists, use `suggest_knowledge_update` to enhance existing entries
+4. Only if no relevant content exists, use `propose_new_knowledge` for new entries
+
+This workflow ensures knowledge is well-organized, reduces duplication, and maintains the quality of the knowledge base.
 
 ### MCP Client Configuration
 
@@ -198,6 +304,3 @@ To add new knowledge:
 
 API keys for the embedding service are stored in the `.env` file, which should never be committed to version control. The `.gitignore` file is configured to exclude this file.
 
-## License
-
-This project is open source and available under the MIT License.

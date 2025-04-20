@@ -1,5 +1,5 @@
 [project]
-name = "mcp-knowledge-server"
+name = "mcp-mind-palace"
 version = "0.1.0"
 description = "Model Context Protocol Server for Markdown-Based Knowledge Management"
 readme = "README.md"
@@ -8,13 +8,13 @@ license = {text = "MIT"}
 dependencies = [
     "chromadb>=1.0.5",
     "fastmcp>=2.2.0",
-    "langchain>=0.3.23",
-    "langchain-openai>=0.3.14",
     "markdown>=3.8",
     "openai>=1.75.0",
+    "pydantic-ai-slim[mcp]>=0.1.3",
     "pydantic>=2.11.3",
     "python-dotenv>=1.1.0",
     "watchdog>=6.0.0",
+    "logfire>=3.14.0",
 ]
 
 [project.optional-dependencies]
