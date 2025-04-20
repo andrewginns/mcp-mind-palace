@@ -6,7 +6,7 @@ logger = logging.getLogger(__name__)
 
 def knowledge_management_workflow() -> Dict[str, Any]:
     """
-    Prompt that guides the LLM on the proper workflow for knowledge management.
+    Prompt that guides the proper workflow for knowledge management.
     This prompt emphasizes the need to check existing knowledge before deciding
     whether to update existing entries or create new ones.
 
