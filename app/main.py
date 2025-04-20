@@ -6,9 +6,10 @@ from contextlib import asynccontextmanager
 
 from mcp.server.fastmcp import FastMCP
 
-from app.config import chroma_client
+from app.config import ACTIVE_KNOWLEDGE_PATH, chroma_client
 from app.resources import register_resources
 from app.tools import register_tools
+from app.prompts import register_prompts
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -80,7 +81,6 @@ async def lifespan_context(server: FastMCP) -> AsyncIterator[None]:
     knowledge_sync = None
 
     try:
-        from app.config import KNOWLEDGE_BASE_PATH
         from app.knowledge_management.synchronization import KnowledgeSync
 
         logger.info("Performing post-initialization setup...")
@@ -92,14 +92,14 @@ async def lifespan_context(server: FastMCP) -> AsyncIterator[None]:
 
         logger.info("Creating KnowledgeSync instance...")
         knowledge_sync = KnowledgeSync(
-            KNOWLEDGE_BASE_PATH, chroma_client, embedding_timeout=30, batch_size=10
+            ACTIVE_KNOWLEDGE_PATH, chroma_client, embedding_timeout=30, batch_size=10
         )
         global_knowledge_sync = knowledge_sync
 
         logger.info("Starting knowledge synchronization...")
         knowledge_sync.start()
         logger.info(
-            f"Knowledge synchronization started, watching {KNOWLEDGE_BASE_PATH}"
+            f"Knowledge synchronization started, watching {ACTIVE_KNOWLEDGE_PATH}"
         )
 
         logger.info("Starting initial synchronization in background thread...")
@@ -122,11 +122,12 @@ async def lifespan_context(server: FastMCP) -> AsyncIterator[None]:
     logger.info("Server shutting down.")
 
 
-mcp = FastMCP("LocalKnowledgeServer", lifespan=lifespan_context)
+mcp = FastMCP("MindPalaceServer", lifespan=lifespan_context)
 
 try:
     register_resources(mcp)
     register_tools(mcp)
+    register_prompts(mcp)
 except Exception as e:
     import traceback
 

@@ -9,15 +9,17 @@ logger = logging.getLogger(__name__)
 
 def search_knowledge(task_description: str, top_k: int = 5) -> List[Dict[str, Any]]:
     """
+    Tool for searching the knowledge base for similar content.
     Performs semantic search on ChromaDB using the embedding of task_description.
     Returns top k relevant chunks with content, metadata, and similarity score.
+    Also includes a relevance_comment to help guide how to interpret results.
 
     Args:
         task_description: Description of the current task
         top_k: Number of results to return
 
     Returns:
-        List of dictionaries containing content, metadata, and similarity score
+        List of dictionaries containing content, metadata, similarity score, and relevance guidance
     """
     try:
         collection = chroma_client.get_collection("knowledge_base")
@@ -34,14 +36,38 @@ def search_knowledge(task_description: str, top_k: int = 5) -> List[Dict[str, An
         formatted_results = []
         if results and results["ids"] and len(results["ids"][0]) > 0:
             for i in range(len(results["ids"][0])):
+                similarity = 1.0 - results["distances"][0][i]
+
+                # Add a relevance comment to guide the LLM
+                if similarity > 0.9:
+                    relevance = "Highly relevant - consider updating this entry instead of creating new content"
+                elif similarity > 0.75:
+                    relevance = "Moderately relevant - examine full content to determine if updates are needed"
+                elif similarity > 0.6:
+                    relevance = "Somewhat relevant - may contain partial information, consider cross-referencing"
+                else:
+                    relevance = "Low relevance - likely covers different aspects, new content may be justified"
+
                 formatted_results.append(
                     {
                         "content": results["documents"][0][i],
                         "metadata": results["metadatas"][0][i],
-                        "similarity_score": 1.0
-                        - results["distances"][0][i],  # Convert distance to similarity
+                        "similarity_score": similarity,
+                        "relevance_comment": relevance,
                     }
                 )
+
+        # If no results, provide guidance for creating new content
+        if not formatted_results:
+            logger.info(f"No relevant results found for: {task_description}")
+            return [
+                {
+                    "content": "",
+                    "metadata": {},
+                    "similarity_score": 0.0,
+                    "relevance_comment": "No relevant content found - creating new knowledge may be appropriate",
+                }
+            ]
 
         return formatted_results
 
@@ -52,7 +78,7 @@ def search_knowledge(task_description: str, top_k: int = 5) -> List[Dict[str, An
 
 def get_entry_details(entry_id: str) -> Dict[str, Any]:
     """
-    Retrieves full details (original Markdown content, metadata) for a specific entry_id.
+    Tool for retrieving full details (original Markdown content, metadata) for a specific entry_id.
 
     Args:
         entry_id: Unique identifier of the knowledge entry

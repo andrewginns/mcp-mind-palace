@@ -4,7 +4,7 @@ from typing import Dict, List, Optional
 
 import markdown
 
-from app.config import KNOWLEDGE_BASE_PATH, chroma_client
+from app.config import ACTIVE_KNOWLEDGE_PATH
 from app.knowledge_management.markdown_parser import (
     get_frontmatter,
     parse_markdown_file,
@@ -24,11 +24,10 @@ def list_knowledge_entries(tag: Optional[str] = None) -> List[Dict]:
     Returns:
         List of dictionaries containing entry_id, title, and tags for each knowledge entry
     """
-    collection = chroma_client.get_collection("knowledge_base")
 
     results = []
 
-    for root, _, files in os.walk(KNOWLEDGE_BASE_PATH):
+    for root, _, files in os.walk(ACTIVE_KNOWLEDGE_PATH):
         for file in files:
             if file.endswith(".md"):
                 file_path = os.path.join(root, file)
@@ -64,7 +63,7 @@ def get_knowledge_entry(entry_id: str) -> Dict:
     Returns:
         Dictionary containing the entry's metadata and content
     """
-    for root, _, files in os.walk(KNOWLEDGE_BASE_PATH):
+    for root, _, files in os.walk(ACTIVE_KNOWLEDGE_PATH):
         for file in files:
             if file.endswith(".md"):
                 file_path = os.path.join(root, file)
