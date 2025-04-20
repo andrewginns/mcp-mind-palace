@@ -35,12 +35,12 @@ server = MCPServerStdio(
         "stdio",
     ],
 )
-agent = Agent("openai:gpt-4o", mcp_servers=[server])
+agent = Agent("openai:gpt-4.1", mcp_servers=[server])
 
 
 async def main():
     async with agent.run_mcp_servers():
-        result = await agent.run("What's in my mind-palace about python type hints?")
+        result = await agent.run("Give me the mind palace entry for python type hints")
     print(result.output)
 
 
