@@ -23,7 +23,7 @@ This is a Python-based Model Context Protocol (MCP) server that provides a persi
    ```
 3. Install dependencies using uv:
    ```
-   cd mcp_server
+   cd mcp_mind_palace
    uv sync
    ```
 

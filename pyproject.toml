@@ -3,7 +3,7 @@ name = "mcp-mind-palace"
 version = "0.1.0"
 description = "Model Context Protocol Server for Markdown-Based Knowledge Management"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = {text = "MIT"}
 dependencies = [
     "chromadb>=1.0.5",
