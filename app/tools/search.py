@@ -77,11 +77,11 @@ def search_knowledge(task_description: str, top_k: int = 5) -> List[Dict[str, An
                 # Adjusted relevance thresholds for more accurate categorization
                 # Cosine similarity tends to be lower in high-dimensional spaces,
                 # so we use more appropriate thresholds
-                if similarity > 0.8:
+                if similarity > 0.7:
                     relevance = "Highly relevant - consider updating this entry instead of creating new content"
-                elif similarity > 0.6:
+                elif similarity > 0.5:
                     relevance = "Moderately relevant - examine full content to determine if updates are needed"
-                elif similarity > 0.3:
+                elif similarity > 0.2:
                     relevance = "Somewhat relevant - may contain partial information, consider cross-referencing"
                 elif similarity > 0:
                     relevance = "Low relevance - may cover related aspects, but new content likely justified"
