@@ -1,5 +1,6 @@
 import logging
-from typing import Any, Dict, List
+from pprint import pprint
+from typing import Any, Dict, List, Optional
 
 from app.config import chroma_client
 from app.knowledge_management.embedder import Embedder
@@ -27,26 +28,65 @@ def search_knowledge(task_description: str, top_k: int = 5) -> List[Dict[str, An
         embedder = Embedder()
         query_embedding = embedder.generate_embedding(task_description)
 
+        # Request more results than top_k to ensure we don't miss relevant entries
+        # 3 * top_k should give a good balance to find the best chunks across multiple documents
         results = collection.query(
             query_embeddings=[query_embedding],
-            n_results=top_k,
+            n_results=max(
+                30, 3 * top_k
+            ),  # At least 30 or 3x top_k, whichever is larger
             include=["documents", "metadatas", "distances"],
         )
 
         formatted_results = []
         if results and results["ids"] and len(results["ids"][0]) > 0:
-            for i in range(len(results["ids"][0])):
-                similarity = 1.0 - results["distances"][0][i]
+            # Process all results and group by entry_id to find the best chunk per entry
+            best_chunks_by_entry = {}
 
-                # Add a relevance comment to guide the LLM
-                if similarity > 0.9:
+            for i in range(len(results["ids"][0])):
+                entry_id = results["metadatas"][0][i].get("entry_id", "unknown")
+                distance = results["distances"][0][i]
+
+                # For cosine distance in ChromaDB, proper similarity is 1 - distance
+                similarity = 1.0 - distance
+
+                # Keep track of the best chunk (highest similarity) for each entry_id
+                if (
+                    entry_id not in best_chunks_by_entry
+                    or similarity > best_chunks_by_entry[entry_id]["similarity"]
+                ):
+                    best_chunks_by_entry[entry_id] = {
+                        "index": i,
+                        "similarity": similarity,
+                    }
+
+            # Sort entries by similarity (highest first)
+            sorted_entries = sorted(
+                best_chunks_by_entry.items(),
+                key=lambda x: x[1]["similarity"],
+                reverse=True,
+            )
+
+            # Use the top_k entries with highest similarity
+            top_entries = sorted_entries[:top_k]
+
+            for entry_id, entry_data in top_entries:
+                i = entry_data["index"]
+                similarity = entry_data["similarity"]
+
+                # Adjusted relevance thresholds for more accurate categorization
+                # Cosine similarity tends to be lower in high-dimensional spaces,
+                # so we use more appropriate thresholds
+                if similarity > 0.8:
                     relevance = "Highly relevant - consider updating this entry instead of creating new content"
-                elif similarity > 0.75:
-                    relevance = "Moderately relevant - examine full content to determine if updates are needed"
                 elif similarity > 0.6:
+                    relevance = "Moderately relevant - examine full content to determine if updates are needed"
+                elif similarity > 0.3:
                     relevance = "Somewhat relevant - may contain partial information, consider cross-referencing"
+                elif similarity > 0:
+                    relevance = "Low relevance - may cover related aspects, but new content likely justified"
                 else:
-                    relevance = "Low relevance - likely covers different aspects, new content may be justified"
+                    relevance = "Very low relevance - covers different topics, new content needed"
 
                 formatted_results.append(
                     {
@@ -117,3 +157,7 @@ def get_entry_details(entry_id: str) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Error getting entry details for {entry_id}: {e}")
         return {"error": f"Error retrieving knowledge entry: {str(e)}"}
+
+
+if __name__ == "__main__":
+    pprint(search_knowledge("python type hints"))

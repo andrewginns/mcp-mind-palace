@@ -274,23 +274,49 @@ class KnowledgeSync:
             title = frontmatter.get("title", entry_id)
             tags = frontmatter.get("tags", [])
             last_modified = frontmatter.get("last_modified", time.strftime("%Y-%m-%d"))
+            description = frontmatter.get("description", "")
 
+            # First delete any existing chunks for this entry
             self._delete_entry_chunks(entry_id)
 
-            chunks = chunk_markdown(content)
+            # Enhanced chunking with configurable parameters for text-embedding-3-small
+            # Using token-based chunking (1000 tokens per chunk with 200 token overlap)
+            chunks = chunk_markdown(
+                content=content,
+                chunk_size=1000,  # Optimal token chunk size for text-embedding-3-small
+                chunk_overlap=200,  # 20% overlap is generally recommended
+                model_name="text-embedding-3-small",
+            )
 
             with self._lock:
                 self.sync_progress["total_chunks"] += len(chunks)
 
+            # Process chunks in batches
             for i in range(0, len(chunks), self.batch_size):
                 batch_chunks = chunks[i : i + self.batch_size]
+
+                # Enhance each chunk with global document context
+                enhanced_chunks = []
+                for chunk in batch_chunks:
+                    # Add document metadata as context prefix to improve semantic search
+                    document_context = f"Document title: {title}. "
+                    if description:
+                        document_context += f"Description: {description}. "
+                    if tags:
+                        document_context += f"Tags: {', '.join(tags)}. "
+
+                    # Combine document context with chunk content
+                    enhanced_chunk = f"{document_context}\n\nContent:\n{chunk}"
+                    enhanced_chunks.append(enhanced_chunk)
 
                 try:
                     import concurrent.futures
 
                     with concurrent.futures.ThreadPoolExecutor() as executor:
                         future = executor.submit(
-                            self.embedder.generate_embeddings_batch, batch_chunks
+                            # Use the safe embedding method to handle chunks of any length
+                            self.embedder.safe_generate_embeddings_batch,
+                            enhanced_chunks,
                         )
                         embeddings = future.result(timeout=self.embedding_timeout)
                 except concurrent.futures.TimeoutError:
@@ -310,6 +336,7 @@ class KnowledgeSync:
                     chunk_index = i + j
                     chunk_id = self.embedder.generate_chunk_id(entry_id, chunk_index)
 
+                    # Create enhanced metadata for better filtering and retrieval
                     metadata = create_chunk_metadata(
                         chunk_index=chunk_index,
                         source_file=os.path.relpath(
@@ -322,9 +349,25 @@ class KnowledgeSync:
                         content_hash=content_hash,
                     )
 
+                    # Add additional metadata fields for improved retrieval
+                    if description:
+                        metadata["description"] = description
+
+                    # Add token count for monitoring
+                    if hasattr(self.embedder, "tokenizer"):
+                        metadata["token_count"] = len(
+                            self.embedder.tokenizer.encode(chunk)
+                        )
+
+                    # Add summary if available in frontmatter
+                    if "summary" in frontmatter:
+                        metadata["summary"] = frontmatter["summary"]
+
                     ids.append(chunk_id)
                     metadatas.append(metadata)
-                    documents.append(chunk)
+                    documents.append(
+                        enhanced_chunks[j]
+                    )  # Store enhanced chunk with context
 
                 try:
                     self.collection.add(

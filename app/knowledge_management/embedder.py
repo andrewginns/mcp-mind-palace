@@ -2,7 +2,9 @@ import hashlib
 import logging
 import os
 import uuid
-from typing import List, Optional
+import numpy as np
+import tiktoken
+from typing import List, Optional, Union, Tuple
 
 import openai
 from dotenv import load_dotenv
@@ -13,20 +15,32 @@ load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+MAX_TOKENS = 8191  # Maximum token limit for text-embedding-3-small
 
 
 class Embedder:
     """
     Class for generating embeddings using OpenAI's API.
+
+    Optimized for text-embedding-3-small model with support for handling texts
+    that exceed the model's maximum token limit.
     """
 
-    def __init__(self, api_key: Optional[str] = None, model: str = EMBEDDING_MODEL):
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model: str = EMBEDDING_MODEL,
+        max_tokens: int = MAX_TOKENS,
+        encoding_name: str = "cl100k_base",
+    ):
         """
         Initialize the Embedder with API key and model.
 
         Args:
             api_key: OpenAI API key (defaults to environment variable)
             model: OpenAI embedding model to use
+            max_tokens: Maximum token limit for the model
+            encoding_name: Tokenizer encoding to use
         """
         self.api_key = api_key or OPENAI_API_KEY
         if not self.api_key:
@@ -35,11 +49,18 @@ class Embedder:
             )
 
         self.model = model
+        self.max_tokens = max_tokens
+        self.encoding_name = encoding_name
         openai.api_key = self.api_key
+
+        # Initialize tokenizer
+        self.tokenizer = tiktoken.get_encoding(encoding_name)
 
     def generate_embedding(self, text: str) -> List[float]:
         """
         Generate embedding for a single text.
+        Note: This method will fail if text exceeds model's token limit.
+        Use safe_generate_embedding for longer texts.
 
         Args:
             text: Text to generate embedding for
@@ -48,6 +69,14 @@ class Embedder:
             List of floats representing the embedding
         """
         try:
+            # Check token count
+            token_count = len(self.tokenizer.encode(text))
+            if token_count > self.max_tokens:
+                logger.warning(
+                    f"Text exceeds token limit ({token_count} > {self.max_tokens}). "
+                    "Consider using safe_generate_embedding instead."
+                )
+
             response = openai.embeddings.create(model=self.model, input=text)
             return response.data[0].embedding
         except Exception as e:
@@ -57,6 +86,8 @@ class Embedder:
     def generate_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
         """
         Generate embeddings for a batch of texts.
+        Note: This method will fail if any text exceeds model's token limit.
+        Use safe_generate_embeddings_batch for longer texts.
 
         Args:
             texts: List of texts to generate embeddings for
@@ -65,11 +96,98 @@ class Embedder:
             List of embeddings (each embedding is a list of floats)
         """
         try:
+            # Check token counts
+            for i, text in enumerate(texts):
+                token_count = len(self.tokenizer.encode(text))
+                if token_count > self.max_tokens:
+                    logger.warning(
+                        f"Text at index {i} exceeds token limit ({token_count} > {self.max_tokens}). "
+                        "Consider using safe_generate_embeddings_batch instead."
+                    )
+
             response = openai.embeddings.create(model=self.model, input=texts)
             return [item.embedding for item in response.data]
         except Exception as e:
             logger.error(f"Error generating embeddings batch: {e}")
             raise
+
+    def safe_generate_embedding(self, text: str, chunk_size: int = 1000) -> List[float]:
+        """
+        Safely generate embedding for text of any length by chunking and averaging.
+
+        For text exceeding the model's token limit, this method splits the text into chunks,
+        generates embeddings for each chunk, and returns a weighted average.
+
+        Args:
+            text: Text to generate embedding for (can be any length)
+            chunk_size: Chunk size in tokens for processing long text
+
+        Returns:
+            List of floats representing the averaged embedding
+        """
+        tokens = self.tokenizer.encode(text)
+
+        # If text is within token limit, use standard embedding
+        if len(tokens) <= self.max_tokens:
+            return self.generate_embedding(text)
+
+        # Otherwise, process in chunks
+        embeddings = []
+        chunk_lengths = []
+
+        # Process token chunks
+        for i in range(0, len(tokens), chunk_size):
+            end_idx = min(i + chunk_size, len(tokens))
+            chunk_tokens = tokens[i:end_idx]
+            chunk_text = self.tokenizer.decode(chunk_tokens)
+
+            try:
+                chunk_embedding = self.generate_embedding(chunk_text)
+                embeddings.append(chunk_embedding)
+                chunk_lengths.append(len(chunk_tokens))
+            except Exception as e:
+                logger.error(f"Error embedding chunk {i // chunk_size}: {e}")
+
+        if not embeddings:
+            raise ValueError("Failed to generate any embeddings for the text")
+
+        # Calculate weighted average based on chunk lengths
+        embeddings_array = np.array(embeddings)
+        weights = np.array(chunk_lengths) / sum(chunk_lengths)
+
+        # Weighted average of embeddings
+        avg_embedding = np.average(embeddings_array, axis=0, weights=weights)
+
+        # Normalize the embedding to unit length
+        norm = np.linalg.norm(avg_embedding)
+        if norm > 0:
+            avg_embedding = avg_embedding / norm
+
+        return avg_embedding.tolist()
+
+    def safe_generate_embeddings_batch(
+        self, texts: List[str], chunk_size: int = 1000
+    ) -> List[List[float]]:
+        """
+        Safely generate embeddings for a batch of texts of any length.
+
+        For texts exceeding the model's token limit, this method processes each text
+        using the safe_generate_embedding method.
+
+        Args:
+            texts: List of texts to generate embeddings for (can be any length)
+            chunk_size: Chunk size in tokens for processing long texts
+
+        Returns:
+            List of embeddings (each embedding is a list of floats)
+        """
+        embeddings = []
+
+        for text in texts:
+            embedding = self.safe_generate_embedding(text, chunk_size)
+            embeddings.append(embedding)
+
+        return embeddings
 
     @staticmethod
     def generate_chunk_id(entry_id: str, chunk_index: int) -> str:
