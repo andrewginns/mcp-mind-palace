@@ -2,6 +2,8 @@
 
 This is a Python-based Model Context Protocol (MCP) server that provides a persistent, searchable knowledge base for Large Language Models (LLMs). The knowledge base is maintained as a collection of human-readable Markdown files, with ChromaDB used as a vector database for efficient semantic search.
 
+![Visual metaphor of a "mind palace" – a grand, ornate library.
+](docs/images/mind_palace_hero.jpg)
 ## Features
 
 - Store knowledge in human-readable Markdown files with YAML frontmatter
