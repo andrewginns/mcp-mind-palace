@@ -262,3 +262,132 @@ async def main():
 4. **Content Hashing**: SHA-256 hashes are used to detect content changes, avoiding unnecessary processing.
 
 5. **Standardized Protocol**: The MCP protocol provides a standardized interface for clients to interact with the knowledge base.
+
+## LLM Integration with MCP Tools
+
+The Mind Palace system uses a well-designed approach to instruct LLMs on how and when to use each MCP tool:
+
+### 1. Tool Registration and Schema Definition
+
+Tools are registered with the MCP server using a Python decorator pattern:
+
+```python
+def register_tools(mcp):
+    from app.tools.proposals import propose_new_knowledge, suggest_knowledge_update
+    from app.tools.search import get_entry_details, search_knowledge
+
+    logger.info("Registering MCP Tools...")
+    mcp.tool()(search_knowledge)
+    mcp.tool()(get_entry_details)
+    mcp.tool()(propose_new_knowledge)
+    mcp.tool()(suggest_knowledge_update)
+```
+
+This registration process:
+- Makes tools available via the MCP protocol
+- Exposes each tool's signature, parameters, and return types
+- Leverages Python type hints and docstrings for schema generation
+
+### 2. Prompt-Based Instruction
+
+A key component is the knowledge management workflow prompt that guides the LLM on proper tool usage:
+
+```python
+def knowledge_management_workflow() -> Dict[str, Any]:
+    return {
+        "name": "knowledge_management_workflow",
+        "description": "Guidelines for managing knowledge entries properly",
+        "content": """# Knowledge Management Workflow
+
+When adding or updating knowledge to this knowledge base, follow this systematic workflow:
+
+## Step 1: Search Existing Knowledge
+Before creating new content, always search the existing knowledge base:
+1. Use the `search_knowledge` tool with a clear description of the topic
+2. Review all results carefully to identify relevant entries
+3. For promising entries, use `get_entry_details` to examine the full content
+
+## Step 2: Decision Point
+Based on your search results, decide the appropriate action:
+- If similar content exists: Suggest an update using `suggest_knowledge_update`
+- If no relevant content exists: Create new knowledge using `propose_new_knowledge`
+...
+"""
+    }
+```
+
+This prompt is registered with the MCP server:
+
+```python
+def register_prompts(mcp):
+    from app.prompts.knowledge_management_prompt import knowledge_management_workflow
+    
+    logger.info("Registering MCP Prompts...")
+    mcp.prompt()(knowledge_management_workflow)
+```
+
+### 3. Self-Guiding Results
+
+The tools themselves guide the LLM by returning structured data with hints about next actions:
+
+```python
+# In search_knowledge function
+if similarity > 0.9:
+    relevance = "Highly relevant - consider updating this entry instead of creating new content"
+elif similarity > 0.75:
+    relevance = "Moderately relevant - examine full content to determine if updates are needed"
+elif similarity > 0.6:
+    relevance = "Somewhat relevant - may contain partial information, consider cross-referencing"
+else:
+    relevance = "Low relevance - likely covers different aspects, new content may be justified"
+```
+
+### 4. Comprehensive Docstrings
+
+Each tool includes detailed docstrings that the LLM can reference:
+
+```python
+def search_knowledge(task_description: str, top_k: int = 5) -> List[Dict[str, Any]]:
+    """
+    Performs semantic search on ChromaDB using the embedding of task_description.
+    Returns top k relevant chunks with content, metadata, and similarity score.
+    Also includes a relevance_comment to help guide the LLM on how to interpret results.
+
+    Args:
+        task_description: Description of the current task
+        top_k: Number of results to return
+
+    Returns:
+        List of dictionaries containing content, metadata, similarity score, and relevance guidance
+    """
+```
+
+### 5. Example Code in Prompts
+
+The prompt includes example code showing the decision flow:
+
+```
+// First, search for relevant knowledge
+results = search_knowledge("Python type hints best practices")
+
+// If relevant entries found, get full details
+if (results.length > 0) {
+  details = get_entry_details(results[0].metadata.entry_id)
+  
+  // If entry needs updates
+  if (needs_updates) {
+    suggest_knowledge_update(details.entry_id, "The section on generic types...")
+  }
+} else {
+  // If nothing relevant found, propose new knowledge
+  propose_new_knowledge("# Python Type Hints Best Practices\n\n...", ["python", "type-hints"])
+}
+```
+
+This multi-layered approach creates a cohesive system where:
+1. Tools expose their capabilities through schemas and documentation
+2. Prompts provide explicit workflows and usage patterns
+3. Return values guide next actions with clear recommendations
+4. The LLM integrates all this information to make informed decisions
+
+The effectiveness of this design demonstrates how structured documentation, clear workflows, and self-guiding results can help LLMs make appropriate decisions about tool usage without requiring modification to the LLM itself.
