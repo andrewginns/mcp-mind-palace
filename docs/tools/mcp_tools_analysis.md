@@ -13,7 +13,7 @@ The repository implements four MCP tools that provide core functionality:
 - Takes a task description and optional top_k parameter
 - Generates an embedding for the query using OpenAI's API
 - Queries ChromaDB for similar content using vector similarity
-- Returns formatted results with content, metadata, and similarity scores
+- Returns formatted results with content, metadata, and similarity scores with relevance comments
 
 **Key Code**:
 ```python
@@ -22,13 +22,28 @@ def search_knowledge(task_description: str, top_k: int = 5) -> List[Dict[str, An
     embedder = Embedder()
     query_embedding = embedder.generate_embedding(task_description)
     
+    # Request more results than top_k to ensure we don't miss relevant entries
+    # 3 * top_k should give a good balance to find the best chunks across multiple documents
     results = collection.query(
         query_embeddings=[query_embedding],
-        n_results=top_k,
+        n_results=max(30, 3 * top_k),  # At least 30 or 3x top_k, whichever is larger
         include=["documents", "metadatas", "distances"]
     )
     
-    # Format and return results
+    # Process results and group by entry_id to find the best chunk per entry
+    # Sort entries by similarity and return top_k entries
+    
+    # Add relevance comments based on similarity
+    if similarity > 0.7:
+        relevance = "Highly relevant - consider updating this entry instead of creating new content"
+    elif similarity > 0.5:
+        relevance = "Moderately relevant - examine full content to determine if updates are needed"
+    elif similarity > 0.2:
+        relevance = "Somewhat relevant - may contain partial information, consider cross-referencing"
+    elif similarity > 0:
+        relevance = "Low relevance - may cover related aspects, but new content likely justified"
+    else:
+        relevance = "Very low relevance - covers different topics, new content needed"
 ```
 
 ### 2. `get_entry_details` Tool
@@ -56,76 +71,123 @@ def get_entry_details(entry_id: str) -> Dict[str, Any]:
                            key=lambda i: results["metadatas"][i].get("chunk_index", 0))
     
     # Reconstruct full content and return with metadata
+    full_content = "\n".join([results["documents"][i] for i in sorted_indices])
+    
+    metadata = results["metadatas"][sorted_indices[0]]
+    
+    return {
+        "entry_id": entry_id,
+        "title": metadata.get("title", entry_id),
+        "tags": metadata.get("tags", []),
+        "last_modified": metadata.get("last_modified_source", ""),
+        "source_file": metadata.get("source_file", ""),
+        "content": full_content,
+    }
 ```
 
 ### 3. `propose_new_knowledge` Tool
 **Purpose**: Allows proposing new knowledge entries for review.
 
 **Implementation**:
-- Takes proposed_content and optional suggested_tags
-- Extracts a title from the content
-- Generates a unique entry_id
-- Creates YAML frontmatter with metadata
-- Saves the proposal as a Markdown file in the proposals directory
+- Takes proposed_content, optional suggested_tags, and search_verification
+- Extracts frontmatter if present and validates required fields
+- Creates a meaningful filename from the title
+- Performs automatic verification search if no search_verification is provided
+- Creates appropriate category directory and saves the proposal with frontmatter
 
 **Key Code**:
 ```python
-def propose_new_knowledge(proposed_content: str, suggested_tags: List[str] = []) -> str:
-    proposals_dir = os.path.join(KNOWLEDGE_BASE_PATH, "proposals")
-    os.makedirs(proposals_dir, exist_ok=True)
+def propose_new_knowledge(
+    proposed_content: str, 
+    suggested_tags: List[str] = [],
+    search_verification: Optional[str] = None
+) -> str:
+    # Extract frontmatter if present
+    frontmatter, remaining_content, has_frontmatter = extract_frontmatter(proposed_content.strip())
     
-    # Extract title and generate entry_id
-    lines = proposed_content.strip().split('\n')
-    title = lines[0].strip('# ') if lines and lines[0].startswith('#') else "Untitled Proposal"
-    timestamp = int(time.time())
-    entry_id = f"proposal-{'-'.join(title.lower().split()[:3])}-{timestamp}"
+    # Validate required frontmatter fields
+    required_fields = ["entry_id", "title", "tags", "created", "last_modified", "status"]
     
-    # Create frontmatter and save file
+    # If no search verification provided, perform automatic search
+    if not search_verification:
+        search_results = search_knowledge(title, top_k=3)
+        # Add warning if similar content exists
+        
+    # Determine appropriate category based on tags
+    
+    # Create proposals directory structure and save file
 ```
 
 ### 4. `suggest_knowledge_update` Tool
 **Purpose**: Allows suggesting updates to existing knowledge entries.
 
 **Implementation**:
-- Takes entry_id and suggested_changes parameters
-- Generates a unique update_id
-- Creates metadata for the update suggestion
-- Saves the update suggestion as a Markdown file in the updates directory
+- Takes entry_id, suggested_changes, and existing_content_verified parameters
+- Verifies the entry exists in the active directory if not already verified
+- Determines the appropriate category from the directory structure
+- Generates a unique update_id and saves the update suggestion
 
 **Key Code**:
 ```python
-def suggest_knowledge_update(entry_id: str, suggested_changes: str) -> str:
-    updates_dir = os.path.join(KNOWLEDGE_BASE_PATH, "updates")
-    os.makedirs(updates_dir, exist_ok=True)
-    
-    # Generate update_id
-    timestamp = int(time.time())
-    update_id = f"update-{entry_id}-{timestamp}"
-    
-    # Create metadata and save file
+def suggest_knowledge_update(
+    entry_id: str, 
+    suggested_changes: str,
+    existing_content_verified: bool = False
+) -> str:
+    # Verify the entry exists if not already verified
+    if not existing_content_verified:
+        # Search for the entry in the active directory
+        
+    # Create updates directory structure and save file
 ```
 
 ## Embedding Process
 
-The `Embedder` class handles vector embedding generation:
+The `Embedder` class handles vector embedding generation with enhanced capabilities:
 
 **Key Features**:
-- Uses OpenAI's API to generate embeddings
+- Uses OpenAI's API to generate embeddings (default: text-embedding-3-small)
 - Supports both single and batch embedding generation
 - Implements utility methods for generating IDs and content hashes
 - Enables efficient change detection through content hashing
+- Handles long texts exceeding token limits through safe embedding methods
 
 **Implementation**:
 ```python
 class Embedder:
-    def __init__(self, api_key: Optional[str] = None, model: str = EMBEDDING_MODEL):
-        # Initialize with API key and model
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model: str = EMBEDDING_MODEL,
+        max_tokens: int = MAX_TOKENS,
+        encoding_name: str = "cl100k_base",
+    ):
+        # Initialize with API key, model, and tokenizer
         
     def generate_embedding(self, text: str) -> List[float]:
-        # Generate embedding for a single text
+        # Generate embedding for a single text (fails if text exceeds token limit)
         
     def generate_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
-        # Generate embeddings for a batch of texts efficiently
+        # Generate embeddings for a batch of texts (fails if any text exceeds token limit)
+        
+    def safe_generate_embedding(self, text: str, chunk_size: int = 1000) -> List[float]:
+        # Safely generate embedding for text of any length by chunking and averaging
+        # For text exceeding token limit, splits into chunks, generates embeddings, and returns weighted average
+        
+    def safe_generate_embeddings_batch(self, texts: List[str], chunk_size: int = 1000) -> List[List[float]]:
+        # Safely generate embeddings for batch of texts of any length
+        
+    @staticmethod
+    def generate_content_hash(content: str) -> str:
+        # Generate SHA-256 hash for content to detect changes
+        
+    @staticmethod
+    def generate_chunk_id(entry_id: str, chunk_index: int) -> str:
+        # Generate deterministic ID for a chunk
+        
+    @staticmethod
+    def generate_uuid_from_content(content: str, namespace=uuid.NAMESPACE_URL) -> str:
+        # Generate UUID from content
 ```
 
 ## Knowledge Synchronization Mechanism
@@ -134,27 +196,57 @@ The `KnowledgeSync` class maintains synchronization between Markdown files and C
 
 **Key Features**:
 - Uses Watchdog to monitor file system events in real-time
-- Processes file creation, modification, and deletion events
+- Processes file creation, modification, and deletion events with debounce mechanism
 - Tracks file state using content hashes for efficient updates
 - Chunks content and generates embeddings in batches
 - Updates ChromaDB with new or modified content
+- Maintains synchronization state between runs
 
 **Implementation**:
 ```python
 class KnowledgeSync:
-    def __init__(self, knowledge_base_path, chroma_client, collection_name="knowledge_base", 
-                 state_file_path=None, embedder=None, enable_watchdog=True,
-                 embedding_timeout=30, batch_size=10):
+    def __init__(
+        self,
+        knowledge_base_path: str,
+        chroma_client,
+        collection_name: str = "knowledge_base",
+        state_file_path: Optional[str] = None,
+        embedder: Optional[Embedder] = None,
+        enable_watchdog: bool = True,
+        embedding_timeout: int = 30,
+        batch_size: int = 10,
+    ):
         # Initialize with paths, client, and configuration
         
     def _setup_watchdog(self):
         # Set up watchdog observer for file monitoring
         
-    def process_file_event(self, file_path, event_type):
+    def _load_state(self) -> Dict[str, str]:
+        # Load synchronization state from file
+        
+    def _save_state(self):
+        # Save synchronization state to file
+        
+    def _get_markdown_files(self) -> List[str]:
+        # Get list of Markdown files in knowledge base
+        
+    def _compute_content_hash(self, file_path: str) -> str:
+        # Compute hash for file content
+        
+    def _process_file(self, file_path: str, content_hash: str):
+        # Process a file: parse, chunk, embed, and update ChromaDB
+        
+    def _delete_entry_chunks(self, entry_id: str):
+        # Delete all chunks for an entry
+        
+    def process_file_event(self, file_path: str, event_type: str):
         # Process file events (created, modified, deleted)
         
-    def _process_file(self, file_path, content_hash):
-        # Process a file: parse, chunk, embed, and update ChromaDB
+    def get_sync_status(self):
+        # Get current synchronization status
+        
+    def sync(self):
+        # Synchronize all files in knowledge base
 ```
 
 ## MCP Resources Implementation
@@ -197,7 +289,7 @@ The system follows a layered architecture with clear data flow:
 2. **Knowledge Synchronization → ChromaDB Updates**:
    - Markdown files are parsed to extract content and frontmatter
    - Content is chunked for efficient processing
-   - Embeddings are generated for chunks
+   - Embeddings are generated for chunks using safe embedding methods
    - ChromaDB is updated with new or modified content
 
 3. **ChromaDB → MCP Tools and Resources**:
@@ -255,13 +347,15 @@ async def main():
 
 1. **Efficient Vector Search**: The system uses ChromaDB for efficient vector similarity search, enabling semantic understanding beyond keyword matching.
 
-2. **Real-time Synchronization**: The Watchdog integration provides real-time monitoring of file changes, ensuring the knowledge base stays up-to-date.
+2. **Real-time Synchronization**: The Watchdog integration provides real-time monitoring of file changes with debounce mechanism, ensuring the knowledge base stays up-to-date.
 
 3. **Batched Processing**: Embedding generation and ChromaDB updates are performed in batches for efficiency.
 
 4. **Content Hashing**: SHA-256 hashes are used to detect content changes, avoiding unnecessary processing.
 
-5. **Standardized Protocol**: The MCP protocol provides a standardized interface for clients to interact with the knowledge base.
+5. **Robust Embedding Generation**: The system handles texts of any length through safe embedding methods that chunk and average embeddings for long texts.
+
+6. **Standardized Protocol**: The MCP protocol provides a standardized interface for clients to interact with the knowledge base.
 
 ## LLM Integration with MCP Tools
 
@@ -290,41 +384,18 @@ This registration process:
 
 ### 2. Prompt-Based Instruction
 
-A key component is the knowledge management workflow prompt that guides the LLM on proper tool usage:
+A key component is the knowledge management and knowledge retreival workflow prompts that guide the LLM on proper tool usage:
 
 ```python
 def knowledge_management_workflow() -> Dict[str, Any]:
-    return {
-        "name": "knowledge_management_workflow",
-        "description": "Guidelines for managing knowledge entries properly",
-        "content": """# Knowledge Management Workflow
+    # Guide the LLM to check existing knowledge first
+    # Then decide if to update existing or propose new knowledge
 
-When adding or updating knowledge to this knowledge base, follow this systematic workflow:
-
-## Step 1: Search Existing Knowledge
-Before creating new content, always search the existing knowledge base:
-1. Use the `search_knowledge` tool with a clear description of the topic
-2. Review all results carefully to identify relevant entries
-3. For promising entries, use `get_entry_details` to examine the full content
-
-## Step 2: Decision Point
-Based on your search results, decide the appropriate action:
-- If similar content exists: Suggest an update using `suggest_knowledge_update`
-- If no relevant content exists: Create new knowledge using `propose_new_knowledge`
-...
-"""
-    }
+def knowledge_retreival_workflow() -> Dict[str, Any]:
+    # Guide the LLM to check existing knowledge first
+    # Return the most relevant knowledge if it exists
 ```
 
-This prompt is registered with the MCP server:
-
-```python
-def register_prompts(mcp):
-    from app.prompts.knowledge_management_prompt import knowledge_management_workflow
-    
-    logger.info("Registering MCP Prompts...")
-    mcp.prompt()(knowledge_management_workflow)
-```
 
 ### 3. Self-Guiding Results
 
@@ -332,14 +403,16 @@ The tools themselves guide the LLM by returning structured data with hints about
 
 ```python
 # In search_knowledge function
-if similarity > 0.9:
+if similarity > 0.7:
     relevance = "Highly relevant - consider updating this entry instead of creating new content"
-elif similarity > 0.75:
+elif similarity > 0.5:
     relevance = "Moderately relevant - examine full content to determine if updates are needed"
-elif similarity > 0.6:
+elif similarity > 0.2:
     relevance = "Somewhat relevant - may contain partial information, consider cross-referencing"
+elif similarity > 0:
+    relevance = "Low relevance - may cover related aspects, but new content likely justified"
 else:
-    relevance = "Low relevance - likely covers different aspects, new content may be justified"
+    relevance = "Very low relevance - covers different topics, new content needed"
 ```
 
 ### 4. Comprehensive Docstrings
@@ -349,9 +422,10 @@ Each tool includes detailed docstrings that the LLM can reference:
 ```python
 def search_knowledge(task_description: str, top_k: int = 5) -> List[Dict[str, Any]]:
     """
+    Tool for searching the knowledge base for similar content.
     Performs semantic search on ChromaDB using the embedding of task_description.
     Returns top k relevant chunks with content, metadata, and similarity score.
-    Also includes a relevance_comment to help guide the LLM on how to interpret results.
+    Also includes a relevance_comment to help guide how to interpret results.
 
     Args:
         task_description: Description of the current task

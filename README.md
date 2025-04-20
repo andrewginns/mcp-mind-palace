@@ -159,6 +159,42 @@ For Docker:
 }
 ```
 
+### Agent Demo Script
+
+A demonstration script is provided in `scripts/agent_mcp_demo.py` that shows how to use the Mind Palace MCP server with the pydantic-ai Agent library:
+
+```python
+import asyncio
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServerStdio
+
+server = MCPServerStdio(
+    command="uv",
+    args=[
+        "--directory",
+        ".",
+        "run",
+        "run_server.py",
+        "stdio",
+    ],
+)
+agent = Agent("openai:gpt-4.1", mcp_servers=[server])
+
+async def main():
+    async with agent.run_mcp_servers():
+        result = await agent.run("Give me the mind palace entry for python type hints")
+    print(result.output)
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+To run this demo:
+
+```bash
+uv run scripts/agent_mcp_demo.py
+```
+
 ### MCP Protocol Usage
 
 MCP servers follow a specific protocol for client-server communication using stdio transport. Clients interact with the server through the MCP API.
@@ -240,31 +276,11 @@ The server exposes the following MCP Resources and Tools:
 
 - `knowledge_management_workflow` - Provides guidance to LLMs on the proper process for managing knowledge
 
+- `knowledge_retreival_workflow` - Provides guidance to LLMs on the proper process for retreiving knowledge
+
 For a comprehensive analysis of how these tools work and interact with the system, see the [MCP Tools Analysis](docs/tools/mcp_tools_analysis.md) documentation.
 
-### LLM Knowledge Management Workflow
 
-This server implements a guided workflow for LLMs to manage knowledge properly, ensuring that:
-
-1. Before proposing new knowledge, the LLM checks existing entries for similar content
-2. If similar content exists, the LLM suggests updates instead of creating duplicates
-3. New knowledge proposals include proper verification steps
-
-The workflow is enforced through:
-
-- A `knowledge_management_workflow` prompt that guides the LLM through the proper steps
-- Enhanced search results with relevance assessments
-- Verification checks in knowledge proposal functions
-- Clear response messages encouraging appropriate tool use
-
-When the LLM needs to add or update information in the knowledge base, it should:
-
-1. First, use `search_knowledge` to find related entries
-2. For promising entries, use `get_entry_details` to examine the full content 
-3. If similar content exists, use `suggest_knowledge_update` to enhance existing entries
-4. Only if no relevant content exists, use `propose_new_knowledge` for new entries
-
-This workflow ensures knowledge is well-organized, reduces duplication, and maintains the quality of the knowledge base.
 
 ### MCP Client Configuration
 
