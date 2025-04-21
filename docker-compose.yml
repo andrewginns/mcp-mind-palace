@@ -1,0 +1,22 @@
+version: '3'
+
+services:
+  mind-palace:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8050:8050"
+    environment:
+      - PORT=8050
+      - HOST=0.0.0.0
+      - TRANSPORT=sse
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    volumes:
+      - ./knowledge_base:/app/knowledge_base
+      - ./knowledge_base/chroma_db:/app/.chroma
+    restart: unless-stopped
+    
+volumes:
+  knowledge_base_chroma_db:
+    driver: local 
