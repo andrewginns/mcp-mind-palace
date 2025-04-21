@@ -47,7 +47,6 @@ def extract_frontmatter(content: str) -> Tuple[Dict[str, Any], str, bool]:
 
 def propose_new_knowledge(
     proposed_content: str,
-    suggested_tags: List[str] = [],
     search_verification: Optional[str] = None,
 ) -> str:
     """
@@ -60,7 +59,6 @@ def propose_new_knowledge(
 
     Args:
         proposed_content: Content of the proposed knowledge entry
-        suggested_tags: List of tags for the proposed entry
         search_verification: Optional confirmation that a search was performed
 
     Returns:

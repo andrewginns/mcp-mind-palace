@@ -118,7 +118,7 @@ def search_knowledge(task_description: str, top_k: int = 5) -> List[Dict[str, An
 
 def get_entry_details(entry_id: str) -> Dict[str, Any]:
     """
-    Tool for retrieving full details (original Markdown content, metadata) for a specific entry_id.
+    Tool for retrieving knowledge entry content with a specific entry_id (also includes metadata).
 
     Args:
         entry_id: Unique identifier of the knowledge entry
