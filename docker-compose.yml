@@ -14,7 +14,7 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
     volumes:
       - ./knowledge_base:/app/knowledge_base
-      - ./knowledge_base/chroma_db:/app/.chroma
+      - ./.chroma:/app/.chroma
     restart: unless-stopped
     
 volumes:
