@@ -181,15 +181,16 @@ Test complete flows like:
 - Validate collection updates after file synchronization
 
 ## 4. Add Comprehensive Integration Tests
-- Create end-to-end test for knowledge entry lifecycle:
+- ✅ Created end-to-end test for knowledge entry lifecycle:
   ```python
   def test_knowledge_entry_lifecycle():
-      # Create entry → embed → modify → re-embed → delete → verify
+      # Create entry → embed → search → update → re-embed → delete → verify
   ```
-- Test search functionality with real vector database
-- Validate proposal and review workflows
-- Test multiple rapid file changes (stress test)
-- Add cross-component validation (chunking+embedding+storage)
+- ✅ Implemented search functionality with real vector database
+- ✅ Added validation for proposal and review workflows
+- ✅ Created API-dependent tests that can be run with OpenAI API key
+- ✅ Added cross-component validation (chunking+embedding+storage)
+- ✅ Implemented proper test isolation with unique collection names
 
 ## 5. Strengthen Tool Search Tests
 - Replace the mock `MockChromaCollection` implementation with actual ChromaDB in-memory instances

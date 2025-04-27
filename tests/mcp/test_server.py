@@ -3,6 +3,7 @@ from unittest.mock import patch, MagicMock
 
 from mcp.server.fastmcp import FastMCP
 from app.tools.search import search_knowledge
+from app.config import chroma_client
 
 
 class TestMCPServerIntegration:
@@ -25,27 +26,71 @@ class TestMCPServerIntegration:
         mcp = MagicMock(spec=FastMCP)
         mcp.tool = MagicMock(return_value=lambda fn: fn)
         return mcp
+        
+    @pytest.fixture
+    def in_memory_chroma(self):
+        """Create an in-memory ChromaDB client for testing."""
+        import chromadb
+        from chromadb.config import Settings
+        
+        client = chromadb.Client(
+            Settings(
+                is_persistent=False,
+                allow_reset=True,
+            )
+        )
+        client.reset()
+        yield client
+        
 
-    @pytest.mark.timeout(2)
-    def test_search_knowledge_tool_integration(self, mock_ctx):
+    @pytest.fixture
+    def setup_chroma_collection(self, in_memory_chroma):
+        """
+        Create a test ChromaDB collection for integration tests.
+        This ensures the collection exists before running tests.
+        """
+        # Create a unique collection name for this test to avoid conflicts
+        collection_name = f"knowledge_base_test_{id(self)}"
+        
+        # Create the collection
+        collection = in_memory_chroma.get_or_create_collection(
+            name=collection_name,
+            embedding_function=None  # Let ChromaDB use its default embedding function
+        )
+        
+        collection.add(
+            documents=["Test content for integration testing"],
+            metadatas=[{"entry_id": "test-entry", "title": "Test Entry"}],
+            ids=["test-id-1"],
+            embeddings=[[0.0] * 384]  # Use 384 dimensions to match ChromaDB's default
+        )
+        
+        yield collection, collection_name
+        
+        try:
+            in_memory_chroma.delete_collection(collection_name)
+        except Exception as e:
+            print(f"Error cleaning up collection: {e}")
+
+    @pytest.mark.timeout(5)  # Increased timeout for ChromaDB operations
+    def test_search_knowledge_tool_integration(self, mock_ctx, setup_chroma_collection):
         """
         Test that the search_knowledge tool is executed properly.
         """
-        # Setup mock search response
-        mock_search_result = [
-            {
-                "content": "Test content",
-                "metadata": {"entry_id": "test-entry", "title": "Test Entry"},
-                "similarity_score": 0.95,
-            }
-        ]
-
-        with patch(
-            "app.tools.search.search_knowledge", return_value=mock_search_result
-        ):
+        collection, collection_name = setup_chroma_collection
+        
+        # Create a mock Embedder that returns 384-dimensional embeddings
+        mock_embedder = MagicMock()
+        mock_embedder.generate_embedding.return_value = [0.1] * 384
+        
+        # Patch the chroma_client, get_collection, and Embedder to use our test objects
+        with patch("app.tools.search.chroma_client", return_value=collection), \
+             patch("app.tools.search.chroma_client.get_collection", return_value=collection), \
+             patch("app.tools.search.Embedder", return_value=mock_embedder):
+            
             # Run the tool function directly
             result = search_knowledge(task_description="Find information about Python")
-
+            
             # Verify the result structure
             assert isinstance(result, list)
             assert len(result) > 0

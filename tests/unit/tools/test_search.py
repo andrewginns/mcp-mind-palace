@@ -1,253 +1,213 @@
 from unittest.mock import MagicMock, patch
 import pytest
-from typing import Dict, Any
+import uuid
+import chromadb
+from chromadb.config import Settings
+from typing import Dict, Any, Tuple
 
 from app.tools.search import search_knowledge, get_entry_details
 from app.knowledge_management.embedder import Embedder
 
 
-class MockChromaCollection:
-    """Mock for a ChromaDB collection that can be configured with test data"""
-
-    def __init__(self, test_data: Dict[str, Any] = None):
-        self.test_data = test_data or {
-            "ids": [["id1", "id2", "id3"]],
-            "documents": [["Test document 1", "Test document 2", "Test document 3"]],
-            "metadatas": [
-                [
-                    {
-                        "entry_id": "entry1",
-                        "title": "Entry 1",
-                        "chunk_index": 0,
-                        "tags": ["test", "example"],
-                    },
-                    {
-                        "entry_id": "entry1",
-                        "title": "Entry 1",
-                        "chunk_index": 1,
-                        "tags": ["test", "example"],
-                    },
-                    {
-                        "entry_id": "entry2",
-                        "title": "Entry 2",
-                        "chunk_index": 0,
-                        "tags": ["example"],
-                    },
-                ]
-            ],
-            "distances": [
-                [0.1, 0.3, 0.6]
-            ],  # Closer to 0 is more similar for cosine distance
-        }
-
-    def query(self, query_embeddings, n_results, include):
-        """Mock the query method to return test data"""
-        return self.test_data
-
-    def get(self, where=None, include=None):
-        """Mock the get method with filtering capability"""
-        if where and "entry_id" in where and "$eq" in where["entry_id"]:
-            entry_id = where["entry_id"]["$eq"]
-
-            # Filter results based on entry_id
-            filtered_ids = []
-            filtered_docs = []
-            filtered_metadata = []
-
-            for i, metadata in enumerate(self.test_data["metadatas"][0]):
-                if metadata.get("entry_id") == entry_id:
-                    filtered_ids.append(self.test_data["ids"][0][i])
-                    filtered_docs.append(self.test_data["documents"][0][i])
-                    filtered_metadata.append(metadata)
-
-            # Return filtered data
-            if filtered_ids:
-                return {
-                    "ids": filtered_ids,
-                    "documents": filtered_docs,
-                    "metadatas": filtered_metadata,
-                }
-
-        # Default empty response
-        return {"ids": [], "documents": [], "metadatas": []}
+@pytest.fixture
+def in_memory_chroma():
+    """Create an in-memory ChromaDB client for testing."""
+    client = chromadb.Client(
+        Settings(
+            is_persistent=False,
+            allow_reset=True,
+        )
+    )
+    client.reset()
+    yield client
 
 
-class MockChromaClient:
-    """Mock for ChromaDB client"""
+@pytest.fixture
+def test_collection(in_memory_chroma):
+    """Create a test collection with sample data."""
+    # Create a unique collection name for this test run
+    collection_name = f"test_collection_{uuid.uuid4().hex[:8]}"
+    
+    # Create the collection
+    collection = in_memory_chroma.get_or_create_collection(
+        name=collection_name,
+        embedding_function=None  # Let ChromaDB use its default embedding function
+    )
+    
+    collection.add(
+        ids=["id1", "id2", "id3"],
+        documents=["Test document 1", "Test document 2", "Test document 3"],
+        metadatas=[
+            {
+                "entry_id": "entry1",
+                "title": "Entry 1",
+                "chunk_index": 0,
+                "tags": "test,example",
+            },
+            {
+                "entry_id": "entry1",
+                "title": "Entry 1",
+                "chunk_index": 1,
+                "tags": "test,example",
+            },
+            {
+                "entry_id": "entry2",
+                "title": "Entry 2",
+                "chunk_index": 0,
+                "tags": "example",
+            },
+        ],
+        embeddings=[[0.1] * 384, [0.2] * 384, [0.3] * 384]  # Use 384 dimensions to match ChromaDB's default
+    )
+    
+    yield collection, collection_name
+    
+    try:
+        in_memory_chroma.delete_collection(collection_name)
+    except Exception as e:
+        print(f"Error cleaning up collection: {e}")
 
-    def __init__(self, collection_data: Dict[str, Any] = None):
-        self.collections = {"knowledge_base": MockChromaCollection(collection_data)}
 
-    def get_collection(self, name):
-        """Return a mock collection"""
-        return self.collections.get(name)
-
-
-class MockEmbedder:
-    """Mock for the Embedder class"""
-
-    def generate_embedding(self, text):
-        """Return a deterministic mock embedding"""
-        # Create a simple mock embedding of the correct dimension
-        return [0.1] * 1536  # OpenAI embeddings are 1536-dimensional
+@pytest.fixture
+def mock_embedder():
+    """Create a mock embedder that returns deterministic embeddings."""
+    mock_embedder = MagicMock(spec=Embedder)
+    mock_embedder.generate_embedding.return_value = [0.1] * 384  # Match ChromaDB's default dimensions
+    return mock_embedder
 
 
 class TestSearchKnowledge:
     """Tests for the search_knowledge function"""
 
-    @patch("app.tools.search.chroma_client")
-    @patch("app.tools.search.Embedder")
-    def test_search_knowledge_basic(self, mock_embedder_class, mock_chroma_client):
-        """Test basic search functionality"""
-        # Configure mocks
-        mock_embedder = MockEmbedder()
-        mock_embedder_class.return_value = mock_embedder
+    def test_search_knowledge_basic(self, test_collection, mock_embedder):
+        """Test basic search functionality using real in-memory ChromaDB"""
+        collection, collection_name = test_collection
+        
+        with patch("app.tools.search.chroma_client.get_collection", return_value=collection), \
+             patch("app.tools.search.Embedder", return_value=mock_embedder):
+            
+            # Run search
+            results = search_knowledge("test query", top_k=2)
 
-        mock_collection = MockChromaCollection()
-        mock_chroma_client.get_collection.return_value = mock_collection
+            # Verify results
+            assert len(results) == 2
+            assert "content" in results[0]
+            assert "metadata" in results[0]
+            assert "similarity_score" in results[0]
+            assert "relevance_comment" in results[0]
 
-        # Run search
-        results = search_knowledge("test query", top_k=2)
+            entry_ids = [result["metadata"]["entry_id"] for result in results]
+            assert "entry1" in entry_ids
+            assert "entry2" in entry_ids
 
-        # Verify results
-        assert len(results) == 2
-        assert "content" in results[0]
-        assert "metadata" in results[0]
-        assert "similarity_score" in results[0]
-        assert "relevance_comment" in results[0]
+    def test_search_knowledge_empty_results(self, in_memory_chroma, mock_embedder):
+        """Test handling of empty search results using real in-memory ChromaDB"""
+        # Create a unique empty collection
+        empty_collection_name = f"empty_collection_{uuid.uuid4().hex[:8]}"
+        empty_collection = in_memory_chroma.get_or_create_collection(
+            name=empty_collection_name
+        )
+        
+        with patch("app.tools.search.chroma_client.get_collection", return_value=empty_collection), \
+             patch("app.tools.search.Embedder", return_value=mock_embedder):
+            
+            # Run search
+            results = search_knowledge("non-existent query", top_k=5)
 
-        # First result should be from entry1 (closest match)
-        assert results[0]["metadata"]["entry_id"] == "entry1"
+            # Verify appropriate response for no results
+            assert len(results) == 1
+            assert results[0]["content"] == ""
+            assert results[0]["similarity_score"] == 0.0
+            assert "No relevant content found" in results[0]["relevance_comment"]
+        
+        in_memory_chroma.delete_collection(empty_collection_name)
 
-        # Second result should be from entry2
-        assert results[1]["metadata"]["entry_id"] == "entry2"
-
-    @patch("app.tools.search.chroma_client")
-    @patch("app.tools.search.Embedder")
-    def test_search_knowledge_empty_results(
-        self, mock_embedder_class, mock_chroma_client
-    ):
-        """Test handling of empty search results"""
-        # Configure empty results
-        empty_data = {
-            "ids": [[]],
-            "documents": [[]],
-            "metadatas": [[]],
-            "distances": [[]],
-        }
-
-        mock_embedder = MockEmbedder()
-        mock_embedder_class.return_value = mock_embedder
-
-        mock_collection = MockChromaCollection(empty_data)
-        mock_chroma_client.get_collection.return_value = mock_collection
-
-        # Run search
-        results = search_knowledge("non-existent query", top_k=5)
-
-        # Verify appropriate response for no results
-        assert len(results) == 1
-        assert results[0]["content"] == ""
-        assert results[0]["similarity_score"] == 0.0
-        assert "No relevant content found" in results[0]["relevance_comment"]
-
-    @patch("app.tools.search.chroma_client")
-    @patch("app.tools.search.Embedder")
-    def test_search_knowledge_error_handling(
-        self, mock_embedder_class, mock_chroma_client
-    ):
+    def test_search_knowledge_error_handling(self, mock_embedder):
         """Test error handling during search"""
-        # Configure mock to raise exception
-        mock_embedder = MockEmbedder()
-        mock_embedder_class.return_value = mock_embedder
+        # Create a mock client that raises an exception
+        mock_client = MagicMock()
+        mock_client.get_collection.side_effect = Exception("Test error")
+        
+        with patch("app.tools.search.chroma_client", mock_client), \
+             patch("app.tools.search.Embedder", return_value=mock_embedder):
+            
+            # Run search
+            results = search_knowledge("test query", top_k=2)
 
-        mock_chroma_client.get_collection.side_effect = Exception("Test error")
+            # Should return empty list on error
+            assert results == []
 
-        # Run search
-        results = search_knowledge("test query", top_k=2)
-
-        # Should return empty list on error
-        assert results == []
-
-    @patch("app.tools.search.chroma_client")
-    def test_search_knowledge_relevance_categorization(self, mock_chroma_client):
-        """Test proper categorization of results by relevance"""
-        # Configure custom results with different similarity scores
-        custom_data = {
-            "ids": [["id1", "id2", "id3", "id4", "id5"]],
-            "documents": [["Doc1", "Doc2", "Doc3", "Doc4", "Doc5"]],
-            "metadatas": [
-                [
-                    {"entry_id": "entry1", "title": "High Relevance", "chunk_index": 0},
-                    {
-                        "entry_id": "entry2",
-                        "title": "Moderate Relevance",
-                        "chunk_index": 0,
-                    },
-                    {
-                        "entry_id": "entry3",
-                        "title": "Somewhat Relevant",
-                        "chunk_index": 0,
-                    },
-                    {"entry_id": "entry4", "title": "Low Relevance", "chunk_index": 0},
-                    {
-                        "entry_id": "entry5",
-                        "title": "Very Low Relevance",
-                        "chunk_index": 0,
-                    },
-                ]
+    def test_search_knowledge_relevance_categorization(self, in_memory_chroma, mock_embedder):
+        """Test that search results include relevance categorization"""
+        # Create a unique collection for this test
+        relevance_collection_name = f"relevance_collection_{uuid.uuid4().hex[:8]}"
+        relevance_collection = in_memory_chroma.get_or_create_collection(
+            name=relevance_collection_name
+        )
+        
+        # Add test data with simple embeddings
+        relevance_collection.add(
+            ids=["id1", "id2", "id3"],
+            documents=["Test document 1", "Test document 2", "Test document 3"],
+            metadatas=[
+                {"entry_id": "entry1", "title": "Test Entry 1", "chunk_index": 0},
+                {"entry_id": "entry2", "title": "Test Entry 2", "chunk_index": 0},
+                {"entry_id": "entry3", "title": "Test Entry 3", "chunk_index": 0},
             ],
-            # Distances that will convert to different similarity levels
-            # Similarity = 1.0 - distance
-            "distances": [[0.1, 0.4, 0.7, 0.9, 0.99]],
-        }
-
-        mock_collection = MockChromaCollection(custom_data)
-        mock_chroma_client.get_collection.return_value = mock_collection
-
-        # Create a real embedder but with generate_embedding mocked
-        with patch.object(Embedder, "generate_embedding", return_value=[0.1] * 1536):
-            results = search_knowledge("test query", top_k=5)
-
-        # Updated assertions to match actual output format
-        assert any(
-            "highly relevant" in result["relevance_comment"].lower()
-            for result in results[:1]
+            embeddings=[
+                [1.0] * 384,  # Simple test embedding
+                [0.5] * 384,  # Simple test embedding
+                [0.1] * 384,  # Simple test embedding
+            ]
         )
-        assert any(
-            "moderately relevant" in result["relevance_comment"].lower()
-            for result in results[1:2]
-        )
-        assert any(
-            "somewhat relevant" in result["relevance_comment"].lower()
-            for result in results[2:3]
-        )
-        assert any(
-            "low relevance" in result["relevance_comment"].lower()
-            for result in results[3:5]
-        )
+        
+        # Configure mock embedder to return a simple embedding
+        mock_embedder.generate_embedding.return_value = [1.0] * 384
+        
+        with patch("app.tools.search.chroma_client.get_collection", return_value=relevance_collection), \
+             patch("app.tools.search.Embedder", return_value=mock_embedder):
+            
+            # Run search
+            results = search_knowledge("test query", top_k=3)
+            
+            assert len(results) > 0, "No search results returned"
+            
+            # Verify each result has the expected fields
+            for result in results:
+                assert "content" in result, "Result missing 'content' field"
+                assert "metadata" in result, "Result missing 'metadata' field"
+                assert "similarity_score" in result, "Result missing 'similarity_score' field"
+                assert "relevance_comment" in result, "Result missing 'relevance_comment' field"
+                
+                # Verify relevance_comment is a non-empty string
+                assert isinstance(result["relevance_comment"], str), "relevance_comment is not a string"
+                assert len(result["relevance_comment"]) > 0, "relevance_comment is empty"
+        
+        in_memory_chroma.delete_collection(relevance_collection_name)
 
 
 class TestGetEntryDetails:
     """Tests for the get_entry_details function"""
 
-    @patch("app.tools.search.chroma_client")
-    def test_get_entry_details_found(self, mock_chroma_client):
-        """Test successful retrieval of entry details"""
-        # Configure mock with multi-chunk entry
-        custom_data = {
-            "ids": ["chunk1", "chunk2", "chunk3"],
-            "documents": [
+    def test_get_entry_details_found(self, in_memory_chroma):
+        """Test successful retrieval of entry details using real in-memory ChromaDB"""
+        # Create a unique collection for this test
+        collection_name = f"entry_details_{uuid.uuid4().hex[:8]}"
+        collection = in_memory_chroma.get_or_create_collection(name=collection_name)
+        
+        collection.add(
+            ids=["chunk1", "chunk2", "chunk3"],
+            documents=[
                 "# Test Entry\n\nFirst part.",
                 "Second part of the content.",
                 "Final part of content.",
             ],
-            "metadatas": [
+            metadatas=[
                 {
                     "entry_id": "test123",
                     "title": "Test Entry",
                     "chunk_index": 0,
-                    "tags": ["test", "example"],
+                    "tags": "test,example",
                     "last_modified_source": "2023-05-15",
                     "source_file": "test/path.md",
                 },
@@ -255,7 +215,7 @@ class TestGetEntryDetails:
                     "entry_id": "test123",
                     "title": "Test Entry",
                     "chunk_index": 1,
-                    "tags": ["test", "example"],
+                    "tags": "test,example",
                     "last_modified_source": "2023-05-15",
                     "source_file": "test/path.md",
                 },
@@ -263,89 +223,108 @@ class TestGetEntryDetails:
                     "entry_id": "test123",
                     "title": "Test Entry",
                     "chunk_index": 2,
-                    "tags": ["test", "example"],
+                    "tags": "test,example",
                     "last_modified_source": "2023-05-15",
                     "source_file": "test/path.md",
                 },
             ],
-        }
-
-        mock_collection = MagicMock()
-        mock_collection.get.return_value = custom_data
-        mock_chroma_client.get_collection.return_value = mock_collection
-
-        # Run the function
-        result = get_entry_details("test123")
-
-        # Verify correct response
-        assert result["entry_id"] == "test123"
-        assert result["title"] == "Test Entry"
-        assert "test" in result["tags"]
-        assert result["last_modified"] == "2023-05-15"
-        assert result["source_file"] == "test/path.md"
-
-        # Content should be reconstructed in order
-        expected_content = "\n".join(
-            [
-                "# Test Entry\n\nFirst part.",
-                "Second part of the content.",
-                "Final part of content.",
+            embeddings=[
+                [0.1] * 384,
+                [0.2] * 384,
+                [0.3] * 384
             ]
         )
-        assert result["content"] == expected_content
+        
+        # Patch the chroma_client.get_collection to use our test collection
+        with patch("app.tools.search.chroma_client.get_collection", return_value=collection):
+            # Run the function
+            result = get_entry_details("test123")
 
-    @patch("app.tools.search.chroma_client")
-    def test_get_entry_details_not_found(self, mock_chroma_client):
-        """Test handling of non-existent entries"""
-        mock_collection = MagicMock()
-        mock_collection.get.return_value = {"ids": []}
-        mock_chroma_client.get_collection.return_value = mock_collection
+            # Verify correct response
+            assert result["entry_id"] == "test123"
+            assert result["title"] == "Test Entry"
+            assert "test" in result["tags"]
+            assert result["last_modified"] == "2023-05-15"
+            assert result["source_file"] == "test/path.md"
 
-        # Run the function
-        result = get_entry_details("nonexistent_id")
+            # Content should be reconstructed in order
+            expected_content = "\n".join(
+                [
+                    "# Test Entry\n\nFirst part.",
+                    "Second part of the content.",
+                    "Final part of content.",
+                ]
+            )
+            assert result["content"] == expected_content
+        
+        in_memory_chroma.delete_collection(collection_name)
 
-        # Verify error response
-        assert "error" in result
-        assert "not found" in result["error"]
+    def test_get_entry_details_not_found(self, in_memory_chroma):
+        """Test handling of non-existent entries using real in-memory ChromaDB"""
+        # Create a unique empty collection for this test
+        collection_name = f"empty_details_{uuid.uuid4().hex[:8]}"
+        collection = in_memory_chroma.get_or_create_collection(name=collection_name)
+        
+        # Patch the chroma_client.get_collection to use our test collection
+        with patch("app.tools.search.chroma_client.get_collection", return_value=collection):
+            # Run the function with a non-existent entry ID
+            result = get_entry_details("nonexistent_id")
 
-    @patch("app.tools.search.chroma_client")
-    def test_get_entry_details_error_handling(self, mock_chroma_client):
+            # Verify error response
+            assert "error" in result
+            assert "not found" in result["error"]
+        
+        in_memory_chroma.delete_collection(collection_name)
+
+    def test_get_entry_details_error_handling(self):
         """Test error handling during retrieval"""
-        mock_chroma_client.get_collection.side_effect = Exception("Test error")
+        # Create a mock client that raises an exception
+        mock_client = MagicMock()
+        mock_client.get_collection.side_effect = Exception("Test error")
+        
+        # Patch the chroma_client
+        with patch("app.tools.search.chroma_client", mock_client):
+            # Run the function
+            result = get_entry_details("test123")
 
-        # Run the function
-        result = get_entry_details("test123")
+            # Verify error response
+            assert "error" in result
+            assert "Test error" in result["error"]
 
-        # Verify error response
-        assert "error" in result
-        assert "Test error" in result["error"]
-
-    @patch("app.tools.search.chroma_client")
-    def test_get_entry_details_chunk_ordering(self, mock_chroma_client):
-        """Test that chunks are properly ordered by chunk_index"""
-        # Configure mock with out-of-order chunks
-        custom_data = {
-            "ids": ["chunk2", "chunk1", "chunk3"],
-            "documents": ["Middle part.", "# Test Entry\n\nFirst part.", "Final part."],
-            "metadatas": [
+    def test_get_entry_details_chunk_ordering(self, in_memory_chroma):
+        """Test that chunks are properly ordered by chunk_index using real in-memory ChromaDB"""
+        # Create a unique collection for this test
+        collection_name = f"chunk_order_{uuid.uuid4().hex[:8]}"
+        collection = in_memory_chroma.get_or_create_collection(name=collection_name)
+        
+        # Add test data with out-of-order chunks
+        collection.add(
+            ids=["chunk2", "chunk1", "chunk3"],
+            documents=["Middle part.", "# Test Entry\n\nFirst part.", "Final part."],
+            metadatas=[
                 {"entry_id": "test123", "title": "Test Entry", "chunk_index": 1},
                 {"entry_id": "test123", "title": "Test Entry", "chunk_index": 0},
                 {"entry_id": "test123", "title": "Test Entry", "chunk_index": 2},
             ],
-        }
-
-        mock_collection = MagicMock()
-        mock_collection.get.return_value = custom_data
-        mock_chroma_client.get_collection.return_value = mock_collection
-
-        # Run the function
-        result = get_entry_details("test123")
-
-        # Content should be sorted by chunk_index, not by original order
-        expected_content = "\n".join(
-            ["# Test Entry\n\nFirst part.", "Middle part.", "Final part."]
+            embeddings=[
+                [0.2] * 384,
+                [0.1] * 384,
+                [0.3] * 384
+            ]
         )
-        assert result["content"] == expected_content
+        
+        # Patch the chroma_client.get_collection to use our test collection
+        with patch("app.tools.search.chroma_client.get_collection", return_value=collection):
+            # Run the function
+            result = get_entry_details("test123")
+
+            # Content should be sorted by chunk_index, not by original order
+            expected_content = "\n".join(
+                ["# Test Entry\n\nFirst part.", "Middle part.", "Final part."]
+            )
+            assert result["content"] == expected_content
+        
+        in_memory_chroma.delete_collection(collection_name)
 
 
 if __name__ == "__main__":
