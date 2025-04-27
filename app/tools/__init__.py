@@ -12,8 +12,19 @@ def register_tools(mcp):
     from app.tools.search import get_entry_details, search_knowledge
 
     logger.info("Registering MCP Tools...")
-    mcp.tool()(search_knowledge)
-    mcp.tool()(get_entry_details)
-    mcp.tool()(propose_new_knowledge)
-    mcp.tool()(suggest_knowledge_update)
-    logger.info("MCP Tools registered successfully")
+
+    tools = [
+        (search_knowledge, "search_knowledge"),
+        (get_entry_details, "get_entry_details"),
+        (propose_new_knowledge, "propose_new_knowledge"),
+        (suggest_knowledge_update, "suggest_knowledge_update"),
+    ]
+
+    for tool_func, tool_name in tools:
+        try:
+            mcp.tool()(tool_func)
+            logger.info(f"Registered tool: {tool_name}")
+        except Exception as e:
+            logging.error(f"Failed to register tool {tool_name}: {str(e)}")
+
+    logger.info("MCP Tools registration completed")

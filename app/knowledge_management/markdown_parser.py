@@ -1,11 +1,14 @@
 import logging
 import os
 import re
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, List
 
 import yaml
 
 logger = logging.getLogger(__name__)
+
+# Define required metadata fields
+REQUIRED_FIELDS = ["entry_id", "title", "tags", "created", "last_modified", "status"]
 
 
 def get_frontmatter(file_path: str) -> Optional[Dict[str, Any]]:
@@ -38,7 +41,7 @@ def get_frontmatter(file_path: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def parse_markdown_file(file_path: str) -> Tuple[str, Optional[Dict[str, Any]]]:
+def parse_markdown_file(file_path: str) -> Dict[str, Any]:
     """
     Parse a Markdown file, extracting both content and frontmatter.
 
@@ -46,9 +49,13 @@ def parse_markdown_file(file_path: str) -> Tuple[str, Optional[Dict[str, Any]]]:
         file_path: Path to the Markdown file
 
     Returns:
-        Tuple containing (content, frontmatter)
+        Dictionary containing:
+        - metadata: Dictionary containing the frontmatter metadata
         - content: The Markdown content without the frontmatter
-        - frontmatter: Dictionary containing the frontmatter metadata or None if no frontmatter is found
+
+    Raises:
+        FileNotFoundError: If the file does not exist
+        Exception: If frontmatter is missing or invalid, or if required fields are missing
     """
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"File not found: {file_path}")
@@ -59,15 +66,25 @@ def parse_markdown_file(file_path: str) -> Tuple[str, Optional[Dict[str, Any]]]:
     frontmatter_pattern = r"^---\s*\n(.*?)\n---\s*\n"
     match = re.search(frontmatter_pattern, content, re.DOTALL)
 
-    if match:
-        try:
-            frontmatter_yaml = match.group(1)
-            frontmatter = yaml.safe_load(frontmatter_yaml)
+    if not match:
+        raise Exception(f"No frontmatter found in {file_path}")
 
-            content_without_frontmatter = re.sub(frontmatter_pattern, "", content, 1)
-            return content_without_frontmatter, frontmatter
-        except yaml.YAMLError as e:
-            logger.error(f"Error parsing frontmatter in {file_path}: {e}")
-            return content, None
+    try:
+        frontmatter_yaml = match.group(1)
+        frontmatter = yaml.safe_load(frontmatter_yaml)
 
-    return content, None
+        # Validate required fields
+        missing_fields = [
+            field for field in REQUIRED_FIELDS if field not in frontmatter
+        ]
+        if missing_fields:
+            raise Exception(
+                f"Missing required fields in frontmatter: {', '.join(missing_fields)}"
+            )
+
+        content_without_frontmatter = re.sub(frontmatter_pattern, "", content, 1)
+
+        return {"metadata": frontmatter, "content": content_without_frontmatter}
+    except yaml.YAMLError as e:
+        logger.error(f"Error parsing frontmatter in {file_path}: {e}")
+        raise Exception(f"Invalid YAML in frontmatter: {e}")

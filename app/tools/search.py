@@ -129,8 +129,9 @@ def get_entry_details(entry_id: str) -> Dict[str, Any]:
     try:
         collection = chroma_client.get_collection("knowledge_base")
 
+        # Use where filter as a dictionary with exact matching
         results = collection.get(
-            where={"entry_id": entry_id}, include=["documents", "metadatas"]
+            where={"entry_id": {"$eq": entry_id}}, include=["documents", "metadatas"]
         )
 
         if not results or not results["ids"]:
@@ -156,7 +157,7 @@ def get_entry_details(entry_id: str) -> Dict[str, Any]:
 
     except Exception as e:
         logger.error(f"Error getting entry details for {entry_id}: {e}")
-        return {"error": f"Error retrieving knowledge entry: {str(e)}"}
+        return {"error": f"Error getting entry details for {entry_id}: {e}"}
 
 
 if __name__ == "__main__":

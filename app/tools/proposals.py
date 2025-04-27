@@ -7,7 +7,7 @@ from datetime import datetime
 
 import yaml
 
-from app.config import KNOWLEDGE_BASE_PATH, ACTIVE_KNOWLEDGE_PATH
+from app.config import KNOWLEDGE_BASE_PATH, ACTIVE_KNOWLEDGE_PATH, REVIEW_KNOWLEDGE_PATH
 from app.tools.search import search_knowledge
 from app.knowledge_management.markdown_parser import get_frontmatter
 
@@ -40,6 +40,7 @@ def extract_frontmatter(content: str) -> Tuple[Dict[str, Any], str, bool]:
             return frontmatter, remaining_content, True
         except yaml.YAMLError as e:
             logger.warning(f"Failed to parse frontmatter YAML: {e}")
+            raise Exception(f"Invalid YAML in frontmatter: {e}")
 
     # No valid frontmatter found
     return {}, content, False
@@ -139,7 +140,7 @@ def propose_new_knowledge(
                     break
 
         # Create proposals directory structure that mirrors active directory
-        proposals_dir = os.path.join(KNOWLEDGE_BASE_PATH, "proposals", category)
+        proposals_dir = os.path.join(REVIEW_KNOWLEDGE_PATH, "proposals", category)
         os.makedirs(proposals_dir, exist_ok=True)
 
         # Reconstruct content with the validated frontmatter
@@ -179,11 +180,11 @@ def suggest_knowledge_update(
     """
     try:
         # Verify the entry exists
+        found = False
+        target_category = "general"  # Default category
+
         if not existing_content_verified:
             # Search for the entry in the active directory
-            found = False
-            target_category = None
-
             for root, _, files in os.walk(ACTIVE_KNOWLEDGE_PATH):
                 for file in files:
                     if file.endswith(".md"):
@@ -208,6 +209,9 @@ def suggest_knowledge_update(
 
             if not found:
                 return f"Error: Knowledge entry with ID '{entry_id}' not found. Please verify the entry exists before suggesting updates."
+        else:
+            # If we're skipping verification, we trust the entry exists
+            found = True
 
         # Create updates directory structure that mirrors active directory
         updates_dir = os.path.join(KNOWLEDGE_BASE_PATH, "updates")

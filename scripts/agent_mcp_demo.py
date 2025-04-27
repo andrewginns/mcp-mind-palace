@@ -21,7 +21,8 @@ for handler in logging.getLogger().handlers:
 
 # Configure logfire without console output
 logfire.configure(send_to_logfire="if-token-present", console=False)
-logfire.instrument_openai()
+logfire.instrument_mcp()
+logfire.instrument_pydantic_ai()
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,7 @@ server = MCPServerStdio(
     ],
 )
 agent = Agent("openai:gpt-4.1", mcp_servers=[server])
+Agent.instrument_all()
 
 
 async def main():

@@ -32,6 +32,8 @@ class Embedder:
         model: str = EMBEDDING_MODEL,
         max_tokens: int = MAX_TOKENS,
         encoding_name: str = "cl100k_base",
+        cache_enabled: bool = False,
+        normalize: bool = False,
     ):
         """
         Initialize the Embedder with API key and model.
@@ -41,6 +43,8 @@ class Embedder:
             model: OpenAI embedding model to use
             max_tokens: Maximum token limit for the model
             encoding_name: Tokenizer encoding to use
+            cache_enabled: Whether to enable caching of embeddings
+            normalize: Whether to normalize embeddings to unit length
         """
         self.api_key = api_key or OPENAI_API_KEY
         if not self.api_key:
@@ -49,12 +53,58 @@ class Embedder:
             )
 
         self.model = model
+        self.embedding_model = model  # For backward compatibility with tests
         self.max_tokens = max_tokens
         self.encoding_name = encoding_name
-        openai.api_key = self.api_key
+        self.cache_enabled = cache_enabled
+        self.normalize = normalize
+        self.cache = {}
+
+        # Initialize OpenAI client
+        self.client = openai.OpenAI(api_key=self.api_key)
 
         # Initialize tokenizer
         self.tokenizer = tiktoken.get_encoding(encoding_name)
+
+    def embed_text(self, text: str) -> List[float]:
+        """
+        Generate embedding for a single text. Alias for generate_embedding.
+        Supports caching if enabled.
+
+        Args:
+            text: Text to generate embedding for
+
+        Returns:
+            List of floats representing the embedding
+        """
+        # Check cache if enabled
+        if self.cache_enabled and text in self.cache:
+            return self.cache[text]
+
+        try:
+            # Generate embedding
+            embedding = self.generate_embedding(text)
+
+            # Cache the result if caching is enabled
+            if self.cache_enabled:
+                self.cache[text] = embedding
+
+            return embedding
+        except Exception as e:
+            logger.error(f"Error in embed_text: {e}")
+            raise
+
+    def embed_batch(self, texts: List[str]) -> List[List[float]]:
+        """
+        Generate embeddings for multiple texts. Alias for generate_embeddings_batch.
+
+        Args:
+            texts: Texts to generate embeddings for
+
+        Returns:
+            List of embeddings
+        """
+        return self.generate_embeddings_batch(texts)
 
     def generate_embedding(self, text: str) -> List[float]:
         """
@@ -77,8 +127,14 @@ class Embedder:
                     "Consider using safe_generate_embedding instead."
                 )
 
-            response = openai.embeddings.create(model=self.model, input=text)
-            return response.data[0].embedding
+            response = self.client.embeddings.create(model=self.model, input=text)
+            embedding = response.data[0].embedding
+
+            # Normalize if required
+            if self.normalize:
+                embedding = self._normalize_embedding(embedding)
+
+            return embedding
         except Exception as e:
             logger.error(f"Error generating embedding: {e}")
             raise
@@ -105,11 +161,34 @@ class Embedder:
                         "Consider using safe_generate_embeddings_batch instead."
                     )
 
-            response = openai.embeddings.create(model=self.model, input=texts)
-            return [item.embedding for item in response.data]
+            response = self.client.embeddings.create(model=self.model, input=texts)
+            embeddings = [item.embedding for item in response.data]
+
+            # Normalize if required
+            if self.normalize:
+                embeddings = [self._normalize_embedding(emb) for emb in embeddings]
+
+            return embeddings
         except Exception as e:
             logger.error(f"Error generating embeddings batch: {e}")
             raise
+
+    def _normalize_embedding(self, embedding: List[float]) -> List[float]:
+        """
+        Normalize an embedding to unit length.
+
+        Args:
+            embedding: The embedding to normalize
+
+        Returns:
+            Normalized embedding
+        """
+        embedding_array = np.array(embedding)
+        norm = np.linalg.norm(embedding_array)
+        if norm > 0:
+            normalized = embedding_array / norm
+            return normalized.tolist()
+        return embedding
 
     def safe_generate_embedding(self, text: str, chunk_size: int = 1000) -> List[float]:
         """
@@ -192,16 +271,16 @@ class Embedder:
     @staticmethod
     def generate_chunk_id(entry_id: str, chunk_index: int) -> str:
         """
-        Generate a deterministic ID for a chunk based on entry_id and chunk_index.
+        Generate a unique ID for a chunk.
 
         Args:
-            entry_id: Unique identifier of the knowledge entry
-            chunk_index: Index of the chunk within the entry
+            entry_id: The ID of the knowledge entry
+            chunk_index: The index of the chunk
 
         Returns:
-            String ID for the chunk
+            A unique ID for the chunk
         """
-        return f"{entry_id}_chunk_{chunk_index}"
+        return f"{entry_id}-chunk-{chunk_index}"
 
     @staticmethod
     def generate_content_hash(content: str) -> str:
