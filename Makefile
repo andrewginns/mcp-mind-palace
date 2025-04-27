@@ -6,3 +6,6 @@ debug:
 force-update-embeddings:
 	@echo "Force updating all embeddings in the knowledge base..."
 	uv run scripts/force_update_embeddings.py
+
+test:
+	uv run pytest

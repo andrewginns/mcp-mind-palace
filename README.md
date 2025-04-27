@@ -297,6 +297,45 @@ To add this MCP server to your client's mcp.json:
 }
 ```
 
+## Testing
+
+The project includes comprehensive unit and integration tests to ensure quality and reliability.
+
+### Running Tests
+
+The easiest way to run tests is using the included test script:
+
+```bash
+# Run all tests
+./run_tests.sh
+
+# Run specific tests
+./run_tests.sh tests/knowledge_management/
+```
+
+You can also run tests directly with pytest:
+
+```bash
+# Run all tests
+uv run pytest
+
+# Run only unit tests (exclude integration tests)
+uv run pytest -m "not integration"
+
+# Run specific test module
+uv run pytest tests/tools/test_search.py
+```
+
+### Test Structure
+
+The tests are organized as follows:
+
+- Unit tests for knowledge management components
+- Unit tests for MCP tools
+- Integration tests for full workflows
+
+For more details, see the [tests README](tests/README.md).
+
 ## Development
 
 ### Synchronization
